@@ -68,7 +68,9 @@ async function updatePatientProfile(req, res) {
 async function removePatientRecord(req, res) {
   const id = req.params.id
   try {
+    // Exact calling match with model.remove
     const deletedData = await patientModel.remove(id)
+    
     if (!deletedData || deletedData.length === 0) {
       return res.status(404).json({ error: "Record not found to delete!" })
     }
