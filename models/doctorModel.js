@@ -3,7 +3,6 @@ const supabase = require('../config/db');
 
 const Doctor = {
   create: async (data) => {
-    // 💾 CODE SE PROFESSIONAL ALPHANUMERIC ID GENERATE KARNA
     const secureRandomId = crypto.randomBytes(4).toString('hex'); 
     const customDoctorId = `DOC-${secureRandomId}`; // Output format: DOC-weasd234
 
