@@ -9,4 +9,3 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 console.log("Database connected successful");
 
 module.exports = supabase;
-// done
