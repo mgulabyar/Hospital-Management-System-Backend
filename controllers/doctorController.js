@@ -11,7 +11,6 @@ const registerDoctor = async (req, res) => {
     room_number,
   } = req.body;
 
-  // Validation Checklist
   if (
     !doctor_name ||
     !pmdc_number ||
