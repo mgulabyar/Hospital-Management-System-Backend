@@ -1,16 +1,16 @@
 const express = require('express')
 const patientRoutes = require('./routes/patientRoutes')
-const doctorRoutes = require('./routes/doctorRoutes')
+const authRoutes = require('./routes/authRoutes') 
 
 const app = express()
+
 app.use(express.json())
 
-// Connect routes models paths
-app.use('/api/patient', patientRoutes)
-app.use('/api/doctor', doctorRoutes)
+app.use('/api/patient', patientRoutes) 
+app.use('/api/auth', authRoutes)   
 
 app.get('/', (req, res) => {
-  res.send('Hospital Management System - Clean CRUD Backend is Live! 🚀')
+  res.send('Hospital Management System - Secured Authentication Gate is Live!')
 })
 
 const PORT = 3000

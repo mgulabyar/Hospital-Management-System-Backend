@@ -1,11 +1,9 @@
 const express = require('express')
 const router = express.Router()
-const authController = require('../controllers/doctorController')
+const authController = require('../controllers/authController')
 
-// 🔓 Public Gate: Koi bhi staff member yahan se login karega
 router.post('/login', authController.loginUser)
 
-// 🔒 Protected Gate: Sirf Admin_Control category wale headers ke sath hit kar sakte hain
 router.post('/register', authController.addUserByAdmin)
 router.get('/all', authController.getAllUsersByAdmin)
 router.delete('/delete/:id', authController.removeUserByAdmin)

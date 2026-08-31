@@ -1,10 +1,10 @@
 const supabase = require('../config/db')
 const crypto = require('crypto')
 
-// 1. REGISTER USER: Admin kisi bhi staff member ko details le kar add karta hai
+// 1. REGISTER USER FUNCTION (Admin Kisi Ko Bhi Add Karega)
 async function create(data) {
   const secureRandomId = crypto.randomBytes(4).toString('hex')
-  const customUserId = `USR-${secureRandomId}` // Generates: USR-a1b2c3d4
+  const customUserId = `USR-${secureRandomId}` // Output: USR-a1b2c3d4
 
   const { data: newUser, error } = await supabase
     .from('users')
@@ -25,7 +25,7 @@ async function create(data) {
   return newUser
 }
 
-// 2. FIND USER BY EMAIL: Login check karne ke liye email se dhoondna
+// 2. FIND USER BY EMAIL (Login Ke Waqt Password Verify Karne Ke Liye)
 async function findByEmail(email) {
   const { data: user, error } = await supabase
     .from('users')
@@ -36,7 +36,7 @@ async function findByEmail(email) {
   return user
 }
 
-// 3. READ ALL USERS: Admin pure registered staff ki list dekh sakta hai
+// 3. READ ALL USERS FUNCTION (Admin Sab Ki List Dekh Sakta Hai)
 async function findAll() {
   const { data: usersList, error } = await supabase
     .from('users')
@@ -45,7 +45,7 @@ async function findAll() {
   return usersList
 }
 
-// 4. DELETE USER: Admin kisi ko bhi system se permanent delete kar sakta hai
+// 4. DELETE USER FUNCTION (Admin Kisi Ko Bhi Permanent Remove Kar Sakta Hai)
 async function remove(id) {
   const { data, error } = await supabase
     .from('users')

@@ -1,4 +1,4 @@
-const userModel = require('../models/doctorModel')
+const authModel = require('../models/authModel') // Linked with clean auth model
 
 // ===================================================
 // 🔐 1. LOGIN SYSTEM GATEWAY WITH DYNAMIC VIEWS HOOKS
@@ -23,13 +23,13 @@ async function loginUser(req, res) {
   }
 
   try {
-    const member = await userModel.findByEmail(email)
+    const member = await authModel.findByEmail(email)
 
     if (!member || member.length === 0) {
       return res.status(401).json({ error: "Invalid Email Address! Access Denied." })
     }
 
-    const activeUser = member[0] // Pehli row nikalna array se
+    const activeUser = member[0] // Get first element of the array
 
     if (activeUser.password !== password) {
       return res.status(401).json({ error: "Incorrect Password! Access Denied." })
@@ -96,7 +96,6 @@ async function loginUser(req, res) {
 // 🛡️ 2. ADMIN PROTECTED CONTROL (STAFF USERS MANAGEMENT)
 // =======================================================
 async function addUserByAdmin(req, res) {
-  // Authorization Check: Requester ka Admin hona lazmi hai (Postman Headers se milega)
   const requesterCategory = req.headers['user-category']
 
   if (requesterCategory !== 'Admin_Control') {
@@ -110,7 +109,7 @@ async function addUserByAdmin(req, res) {
   }
 
   try {
-    const record = await userModel.create(req.body)
+    const record = await authModel.create(req.body)
     res.status(201).json({ message: "New Staff User Registered Successfully by Admin!", user: record })
   } catch (err) {
     if (err.code === '23505') return res.status(400).json({ error: "This email or phone number is already registered!" })
@@ -125,7 +124,7 @@ async function getAllUsersByAdmin(req, res) {
   }
 
   try {
-    const list = await userModel.findAll()
+    const list = await authModel.findAll()
     res.status(200).json({ total_users: list.length, data: list })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -140,7 +139,7 @@ async function removeUserByAdmin(req, res) {
 
   const id = req.params.id
   try {
-    const deleted = await userModel.remove(id)
+    const deleted = await authModel.remove(id)
     if (!deleted || deleted.length === 0) return res.status(404).json({ error: "User not found!" })
     res.status(200).json({ message: "User deleted permanently from the system!", data: deleted })
   } catch (err) {

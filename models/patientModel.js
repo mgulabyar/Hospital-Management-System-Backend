@@ -1,7 +1,6 @@
 const supabase = require('../config/db')
 const crypto = require('crypto')
 
-// 1. Patient Register (Create) Function
 async function create(data) {
   const secureRandomId = crypto.randomBytes(4).toString('hex') 
   const customPatientId = `PAT-${secureRandomId}` 
@@ -26,7 +25,6 @@ async function create(data) {
   return newPatient
 }
 
-// 2. Saare Patients Get (FindAll) Function
 async function findAll() {
   const { data: patients, error } = await supabase
     .from('patients')
@@ -36,7 +34,6 @@ async function findAll() {
   return patients
 }
 
-// 3. Kisi Ek Patient Ko ID Se Get (FindById) Function
 async function findById(id) {
   const { data: patient, error } = await supabase
     .from('patients')
@@ -47,7 +44,6 @@ async function findById(id) {
   return patient
 }
 
-// 4. Patient Ka Data Update Function
 async function update(id, updatedData) {
   const { data: patient, error } = await supabase
     .from('patients')
@@ -67,7 +63,6 @@ async function update(id, updatedData) {
   return patient
 }
 
-// 5. Patient Ka Data Delete Function
 async function remove(id) {
   const { data, error } = await supabase
     .from('patients')
@@ -79,7 +74,6 @@ async function remove(id) {
   return data
 }
 
-// Yahan check karein ke 'remove' sahi tarah export ho raha hai
 module.exports = {
   create,
   findAll,
