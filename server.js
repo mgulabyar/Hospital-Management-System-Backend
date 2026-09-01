@@ -1,8 +1,21 @@
 const express = require("express");
 const cors = require("cors");
-const authRoutes = require("./routes/authRoutes");
-const patientRoutes = require("./routes/patientRoutes"); // Naya route
-require("dotenv").config();
+const dotenv = require("dotenv");
+const connectDB = require("./config/db.js");
+const authRoutes = require("./routes/authRoutes.js");
+const staffRoutes = require("./routes/staffRoutes.js");
+const patientRoutes = require("./routes/patientRoutes.js");
+const tokenRoutes = require("./routes/tokenRoutes.js");
+const medicalRecordRoutes = require('./routes/medicalRecordRoutes.js');
+const labRoutes = require('./routes/labRoutes.js');
+const pharmacyRoutes = require('./routes/pharmacyRoutes.js');
+const billingRoutes = require('./routes/billingRoutes.js');
+
+
+
+dotenv.config();
+
+connectDB();
 
 const app = express();
 
@@ -10,9 +23,20 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
-app.use("/api/patients", patientRoutes); // Path: http://localhost:3000/api/patients
+app.use("/api/staff", staffRoutes);
+app.use("/api/patients", patientRoutes);
+app.use("/api/tokens", tokenRoutes);
+app.use('/api/medical-records', medicalRecordRoutes);
+app.use('/api/lab', labRoutes);
+app.use('/api/pharmacy', pharmacyRoutes);
+app.use("/api/billing", billingRoutes);
 
-const PORT = 3000;
+
+app.get("/", (req, res) => {
+  res.send("Hospital Management System API is running...");
+});
+
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port http://localhost:${PORT}`);
 });

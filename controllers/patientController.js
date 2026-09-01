@@ -1,80 +1,72 @@
-const patientModel = require("../models/patientModel");
+const PatientProfile = require("../models/patientProfile");
 
-// 1. CREATE: Naya Patient Register Karna
-async function registerPatient(req, res) {
+const registerPatient = async (req, res) => {
   try {
-    const record = await patientModel.create(req.body, req.user.user_id);
-    res
-      .status(201)
-      .json({ message: "Patient Registered Successfully!", data: record });
-  } catch (err) {
-    if (err.code === "23505") {
-      return res
-        .status(400)
-        .json({ error: "Patient with this phone number already exists!" });
+    const {
+      name,
+      age,
+      gender,
+      phone,
+      cnicOrPassport,
+      bloodGroup,
+      address,
+      emergencyContact,
+    } = req.body;
+
+    const patientExists = await PatientProfile.findOne({ phone });
+    if (patientExists) {
+      return res.status(400).json({
+        success: false,
+        message: "Patient with this phone number already exists",
+      });
     }
-    res.status(500).json({ error: err.message });
-  }
-}
 
-// 2. READ ALL: Saare Patients Ki List Lene Ka Function
-async function getAllPatients(req, res) {
-  try {
-    const list = await patientModel.findAll();
-    res.status(200).json({ total: list.length, data: list });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
+    const totalRecords = await PatientProfile.countDocuments({});
+    const patientId = `H-${1001 + totalRecords}`;
 
-// 3. READ SINGLE: ID Se Patient Dhoondna
-async function getPatientDetails(req, res) {
-  try {
-    const data = await patientModel.findById(req.params.id);
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: "Patient record not found!" });
-    }
-    res.status(200).json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
+    const patient = await PatientProfile.create({
+      patientId,
+      name,
+      age,
+      gender,
+      phone,
+      cnicOrPassport,
+      bloodGroup,
+      address,
+      emergencyContact,
+    });
 
-// 4. UPDATE: Patient Ka Data Update (Correction) Karna
-async function updatePatientInfo(req, res) {
-  try {
-    const data = await patientModel.update(req.params.id, req.body);
-    if (!data || data.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "Targeted patient records not found!" });
-    }
-    res.status(200).json({ message: "Patient information updated.", data });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(201).json({
+      success: true,
+      message: "Patient profile registered successfully",
+      data: patient,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
-}
-
-async function deletePatientRecord(req, res) {
-  try {
-    const deleted = await patientModel.remove(req.params.id);
-    if (!deleted || deleted.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "Patient profile not found to delete!" });
-    }
-    res
-      .status(200)
-      .json({ message: "Patient record completely deleted!", data: deleted });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
-module.exports = {
-  registerPatient,
-  getAllPatients,
-  getPatientDetails,
-  updatePatientInfo,
-  deletePatientRecord,
 };
+
+const getPatients = async (req, res) => {
+  try {
+    const { search } = req.query;
+    let query = {};
+
+    if (search) {
+      query = {
+        $or: [
+          { name: { $regex: search, $options: "i" } },
+          { phone: { $regex: search, $options: "i" } },
+        ],
+      };
+    }
+
+    const patients = await PatientProfile.find(query);
+    return res
+      .status(200)
+      .json({ success: true, count: patients.length, data: patients });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { registerPatient, getPatients };

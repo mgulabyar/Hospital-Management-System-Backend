@@ -1,245 +1,126 @@
-const authModel = require("../models/authModel");
-const bcrypt = require("bcryptjs");
+const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = process.env.JWT_SECRET || "HMS_KEY_2026";
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+};
 
-
-async function loginUser(req, res) {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res
-      .status(400)
-      .json({ error: "Email and password are both required!" });
-  }
-
-  if (email === "owner@hospital.com" && password === "Owner@2026") {
-    const token = jwt.sign(
-      { id: "OWNER-001", role_category: "Admin_Control" },
-      JWT_SECRET,
-    );
-
-    try {
-      await authModel.createSession("OWNER-001", token);
-    } catch (sessionErr) {
-      console.log(
-        "Master session linked configuration bypassed or table auto-locked",
-      );
-    }
-
-    return res.status(200).json({
-      message: "Welcome Master Super Admin / Owner!",
-      token,
-      profile: {
-        user_id: "OWNER-001",
-        name: "Hospital Owner (CEO)",
-        email: "owner@hospital.com",
-        role_category: "Admin_Control",
-        specific_role: "Super_Admin",
-        phone_number: "03000000000",
-      },
-      allowed_views: [
-        "Add_New_Staff_User",
-        "Delete_Staff_User",
-        "Hospital_Global_Finances",
-        "Staff_Salaries_Management",
-        "Clear_Utility_Bills",
-      ],
-    });
-  }
-
+const registerUser = async (req, res) => {
   try {
-    const member = await authModel.findByEmail(email);
-    if (!member || member.length === 0) {
-      return res.status(401).json({ error: "Invalid Email Address!" });
-    }
+    const { name, email, password, role } = req.body;
 
-    const activeUser = member[0];
-
-    // Exact compare checking mechanism with bcryptjs string matching parameter bounds
-    const isMatch = await bcrypt.compare(password, activeUser.password);
-    if (!isMatch) {
-      return res
-        .status(401)
-        .json({ error: "Incorrect Password! Access Denied." });
-    }
-
-    const token = jwt.sign(
-      { id: activeUser.user_id, role_category: activeUser.role_category },
-      JWT_SECRET,
-    );
-    await authModel.createSession(activeUser.user_id, token);
-
-    const category = activeUser.role_category;
-    const role = activeUser.specific_role;
-    let views = [];
-
-    // 🛡️ AUTHORIZATION ASSIGNMENT MATRIX ACCORDING TO SYSTEM CONFIGURATION DESIGN
-    if (category === "Admin_Control") {
-      views = [
-        "Billing_Invoices_Verification",
-        "Utility_Ledgers_Entry",
-        "Salaries_Distribution_Logs",
-      ];
-    } else if (category === "Front_Desk") {
-      views = [
-        "New_Patient_Registration",
-        "Search_Patient_Records",
-        "Generate_Daily_Token_Slips",
-        "View_Active_Doctor_Rooms",
-      ];
-    } else if (category === "Clinical_Medical") {
-      views = [
-        "View_Assigned_Department_Queue",
-        "Access_Patient_Clinical_History",
-      ];
-      if (role === "Doctor") {
-        views.push(
-          "Call_Next_Queue_Patient",
-          "Execute_Discharge_Completion_Triggers",
-          "Fires_Digital_Prescription",
-          "Order_Lab_Radiology_Tests",
-        );
-      } else if (role === "Assistant") {
-        views.push(
-          "Shared_Clinical_Summaries_Pad",
-          "Minor_Observation_Loggers",
-        );
-      } else if (role === "Nurse") {
-        views.push(
-          "Record_Triage_Vitals_Form",
-          "Orders_Continuum_Checklist_Execution",
-        );
-      }
-    } else if (category === "Clinical_Support") {
-      views = ["Room_Duty_Roster_Check"];
-      if (role === "Lab_Tech") {
-        views.push(
-          "Incoming_Diagnostic_Orders_Queue",
-          "Result_Data_Matrix_Editor",
-          "Upload_Final_Verification_Reports",
-        );
-      } else if (role === "Helper") {
-        views.push(
-          "Basic_Patient_Wheelchair_Movement",
-          "Ward_Bed_Status_Triggers",
-        );
-      }
-    }
-
-    res.status(200).json({
-      message: `Welcome ${role} ${activeUser.name}! Dashboard Session Activated.`,
-      token,
-      profile: activeUser,
-      allowed_views: views,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
-// ===================================================
-// 🔓 2. LOGOUT SESSION TRUNCATION CONTROLLER
-// ===================================================
-async function logoutUser(req, res) {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    return res
-      .status(400)
-      .json({ error: "Session authentication token is missing!" });
-  }
-
-  try {
-    await authModel.deleteSession(token);
-    res
-      .status(200)
-      .json({
-        message:
-          "Logged out completely. Secure session data purged from system layers.",
-      });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
-// =======================================================
-// 🔒 3. ADMIN MANAGEMENT TERMINAL CONTROLLERS DIRECTIVES
-// =======================================================
-async function addUserByAdmin(req, res) {
-  try {
-    const record = await authModel.create(req.body);
-    res
-      .status(201)
-      .json({
-        message:
-          "New Staff Personnel Registered Successfully inside Central System Ledger!",
-        user: record,
-      });
-  } catch (err) {
-    if (err.code === "23505") {
+    if (!name || !email || !password) {
       return res
         .status(400)
-        .json({
-          error: "This email registration data or phone number already exists!",
-        });
+        .json({ success: false, message: "Please fill all required fields" });
     }
-    res.status(500).json({ error: err.message });
-  }
-}
 
-async function getAllUsersByAdmin(req, res) {
-  try {
-    const list = await authModel.findAll();
-    res.status(200).json({ total_users: list.length, data: list });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
+    let user = await User.findOne({ email });
 
-async function updateStaffByAdmin(req, res) {
-  const id = req.params.id;
-  try {
-    const data = await authModel.update(id, req.body);
-    if (!data || data.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "Targeted staff profile record not found!" });
-    }
-    res
-      .status(200)
-      .json({ message: "Staff Profile Parameters Updated Safely!", data });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
+    if (user) {
+      user.name = name;
+      user.password = password;
+      if (role) user.role = role;
 
-async function removeUserByAdmin(req, res) {
-  const id = req.params.id;
-  try {
-    const deleted = await authModel.remove(id);
-    if (!deleted || deleted.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "Staff member targeting profile row not found!" });
-    }
-    res
-      .status(200)
-      .json({
-        message:
-          "Staff removed permanently from hospital systems database layers!",
-        data: deleted,
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: "Account updated and overwritten successfully inside database",
+        data: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          token: generateToken(user._id),
+        },
       });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    }
+
+    user = await User.create({ name, email, password, role });
+
+    return res.status(201).json({
+      success: true,
+      message: "New account registered successfully",
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        token: generateToken(user._id),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
-}
+};
+
+const loginUser = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide email and password" });
+    }
+
+    const user = await User.findOne({ email });
+
+    if (user && (await user.matchPassword(password))) {
+      return res.json({
+        success: true,
+        data: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          token: generateToken(user._id),
+        },
+      });
+    } else {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid email or password" });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const logoutUser = async (req, res) => {
+  try {
+    const targetUserId = req.user._id;
+
+    const userRecord = await User.findById(targetUserId);
+    if (!userRecord) {
+      return res.status(404).json({
+        success: false,
+        message: "Active session user record not found",
+      });
+    }
+
+    await User.findByIdAndDelete(targetUserId);
+
+    return res.status(200).json({
+      success: true,
+      message: `Session terminated. User profile '${userRecord.name}' with email '${userRecord.email}' has been permanently deleted from database memory.`,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getSuperAdminDashboard = async (req, res) => {
+  return res.json({
+    success: true,
+    message: `Welcome to the Super Admin Dashboard, ${req.user.name}!`,
+  });
+};
 
 module.exports = {
+  registerUser,
   loginUser,
+  getSuperAdminDashboard,
   logoutUser,
-  addUserByAdmin,
-  getAllUsersByAdmin,
-  updateStaffByAdmin,
-  removeUserByAdmin,
 };

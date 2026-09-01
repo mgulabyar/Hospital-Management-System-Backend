@@ -1,14 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const {
-  registerPatient,
-  getPatients,
-} = require("../controllers/patientController");
+  issueToken,
+  getTokensQueue,
+} = require("../controllers/tokenController");
 const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
 router.use(protect);
-router.use(authorizeRoles("super_admin", "receptionist"));
+router.use(authorizeRoles("super_admin", "receptionist", "doctor"));
 
-router.route("/").post(registerPatient).get(getPatients);
+router.route("/").post(issueToken).get(getTokensQueue);
 
 module.exports = router;
