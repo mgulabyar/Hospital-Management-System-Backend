@@ -1,155 +1,245 @@
-const authModel = require('../models/authModel') // Linked with clean auth model
+const authModel = require("../models/authModel");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
-// ===================================================
-// 🔐 1. LOGIN SYSTEM GATEWAY WITH DYNAMIC VIEWS HOOKS
-// ===================================================
+const JWT_SECRET = process.env.JWT_SECRET || "HMS_KEY_2026";
+
+
 async function loginUser(req, res) {
-  const { email, password } = req.body
+  const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.status(400).json({ error: "Email and password are both required!" })
+    return res
+      .status(400)
+      .json({ error: "Email and password are both required!" });
   }
 
-  // ⭐ MAKHSOOS FIXED EMAIL & PASSWORD FOR SUPER ADMIN / OWNER
   if (email === "owner@hospital.com" && password === "Owner@2026") {
+    const token = jwt.sign(
+      { id: "OWNER-001", role_category: "Admin_Control" },
+      JWT_SECRET,
+    );
+
+    try {
+      await authModel.createSession("OWNER-001", token);
+    } catch (sessionErr) {
+      console.log(
+        "Master session linked configuration bypassed or table auto-locked",
+      );
+    }
+
     return res.status(200).json({
-      message: "Welcome Master Super Admin / Owner! Accessing Global Control Dashboard.",
-      user_id: "OWNER-001",
-      name: "Hospital Owner (CEO)",
-      role_category: "Admin_Control",
-      specific_role: "Super_Admin",
-      allowed_views: ["Add_New_Staff_User", "Delete_Staff_User", "Hospital_Global_Finances", "Staff_Salaries_Management", "Clear_Utility_Bills"]
-    })
+      message: "Welcome Master Super Admin / Owner!",
+      token,
+      profile: {
+        user_id: "OWNER-001",
+        name: "Hospital Owner (CEO)",
+        email: "owner@hospital.com",
+        role_category: "Admin_Control",
+        specific_role: "Super_Admin",
+        phone_number: "03000000000",
+      },
+      allowed_views: [
+        "Add_New_Staff_User",
+        "Delete_Staff_User",
+        "Hospital_Global_Finances",
+        "Staff_Salaries_Management",
+        "Clear_Utility_Bills",
+      ],
+    });
   }
 
   try {
-    const member = await authModel.findByEmail(email)
-
+    const member = await authModel.findByEmail(email);
     if (!member || member.length === 0) {
-      return res.status(401).json({ error: "Invalid Email Address! Access Denied." })
+      return res.status(401).json({ error: "Invalid Email Address!" });
     }
 
-    const activeUser = member[0] // Get first element of the array
+    const activeUser = member[0];
 
-    if (activeUser.password !== password) {
-      return res.status(401).json({ error: "Incorrect Password! Access Denied." })
+    // Exact compare checking mechanism with bcryptjs string matching parameter bounds
+    const isMatch = await bcrypt.compare(password, activeUser.password);
+    if (!isMatch) {
+      return res
+        .status(401)
+        .json({ error: "Incorrect Password! Access Denied." });
     }
 
-    const category = activeUser.role_category
-    const role = activeUser.specific_role
+    const token = jwt.sign(
+      { id: activeUser.user_id, role_category: activeUser.role_category },
+      JWT_SECRET,
+    );
+    await authModel.createSession(activeUser.user_id, token);
 
-    // 🛡️ AUTHORIZATION: CATEGORY & ROLE KI BASE PAR DASHBOARD ALLOCATION
+    const category = activeUser.role_category;
+    const role = activeUser.specific_role;
+    let views = [];
+
+    // 🛡️ AUTHORIZATION ASSIGNMENT MATRIX ACCORDING TO SYSTEM CONFIGURATION DESIGN
     if (category === "Admin_Control") {
-      return res.status(200).json({
-        message: `Welcome Accountant ${activeUser.name}! Dashboard Loaded.`,
-        profile: activeUser,
-        allowed_views: ["Billing_Invoices_Verification", "Utility_Ledgers_Entry", "Salaries_Distribution_Logs"]
-      })
-    } 
-    
-    else if (category === "Front_Desk") {
-      return res.status(200).json({
-        message: `Welcome Receptionist ${activeUser.name}! Dashboard Loaded.`,
-        profile: activeUser,
-        allowed_views: ["New_Patient_Registration", "Search_Patient_Records", "Generate_Daily_Token_Slips"]
-      })
-    } 
-    
-    else if (category === "Clinical_Medical") {
-      let views = ["View_Assigned_Department_Queue", "Access_Patient_Clinical_History"]
+      views = [
+        "Billing_Invoices_Verification",
+        "Utility_Ledgers_Entry",
+        "Salaries_Distribution_Logs",
+      ];
+    } else if (category === "Front_Desk") {
+      views = [
+        "New_Patient_Registration",
+        "Search_Patient_Records",
+        "Generate_Daily_Token_Slips",
+        "View_Active_Doctor_Rooms",
+      ];
+    } else if (category === "Clinical_Medical") {
+      views = [
+        "View_Assigned_Department_Queue",
+        "Access_Patient_Clinical_History",
+      ];
       if (role === "Doctor") {
-        views.push("Call_Next_Queue_Patient", "Execute_Discharge_Completion_Triggers", "Fires_Digital_Prescription")
+        views.push(
+          "Call_Next_Queue_Patient",
+          "Execute_Discharge_Completion_Triggers",
+          "Fires_Digital_Prescription",
+          "Order_Lab_Radiology_Tests",
+        );
       } else if (role === "Assistant") {
-        views.push("Shared_Clinical_Summaries_Pad", "Minor_Observation_Loggers")
+        views.push(
+          "Shared_Clinical_Summaries_Pad",
+          "Minor_Observation_Loggers",
+        );
       } else if (role === "Nurse") {
-        views.push("Record_Triage_Vitals_Form", "Orders_Execution_Checklist")
+        views.push(
+          "Record_Triage_Vitals_Form",
+          "Orders_Continuum_Checklist_Execution",
+        );
       }
-
-      return res.status(200).json({
-        message: `Welcome ${role} ${activeUser.name}! Dashboard Loaded.`,
-        profile: activeUser,
-        allowed_views: views
-      })
-    } 
-    
-    else if (category === "Clinical_Support") {
-      let views = ["Room_Duty_Roster_Check"]
+    } else if (category === "Clinical_Support") {
+      views = ["Room_Duty_Roster_Check"];
       if (role === "Lab_Tech") {
-        views.push("Incoming_Diagnostic_Orders_Queue", "Result_Data_Matrix_Editor")
+        views.push(
+          "Incoming_Diagnostic_Orders_Queue",
+          "Result_Data_Matrix_Editor",
+          "Upload_Final_Verification_Reports",
+        );
       } else if (role === "Helper") {
-        views.push("Basic_Patient_Movement", "Ward_Bed_Status_Triggers")
+        views.push(
+          "Basic_Patient_Wheelchair_Movement",
+          "Ward_Bed_Status_Triggers",
+        );
       }
-
-      return res.status(200).json({
-        message: `Welcome ${role} ${activeUser.name}! Dashboard Loaded.`,
-        profile: activeUser,
-        allowed_views: views
-      })
     }
 
+    res.status(200).json({
+      message: `Welcome ${role} ${activeUser.name}! Dashboard Session Activated.`,
+      token,
+      profile: activeUser,
+      allowed_views: views,
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// ===================================================
+// 🔓 2. LOGOUT SESSION TRUNCATION CONTROLLER
+// ===================================================
+async function logoutUser(req, res) {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) {
+    return res
+      .status(400)
+      .json({ error: "Session authentication token is missing!" });
+  }
+
+  try {
+    await authModel.deleteSession(token);
+    res
+      .status(200)
+      .json({
+        message:
+          "Logged out completely. Secure session data purged from system layers.",
+      });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 }
 
 // =======================================================
-// 🛡️ 2. ADMIN PROTECTED CONTROL (STAFF USERS MANAGEMENT)
+// 🔒 3. ADMIN MANAGEMENT TERMINAL CONTROLLERS DIRECTIVES
 // =======================================================
 async function addUserByAdmin(req, res) {
-  const requesterCategory = req.headers['user-category']
-
-  if (requesterCategory !== 'Admin_Control') {
-    return res.status(403).json({ error: "Access Forbidden! Only Admin/Owner can add new staff users." })
-  }
-
-  const { name, email, password, role_category, specific_role, phone_number } = req.body
-
-  if (!name || !email || !password || !role_category || !specific_role || !phone_number) {
-    return res.status(400).json({ error: "All user configuration fields are strictly required!" })
-  }
-
   try {
-    const record = await authModel.create(req.body)
-    res.status(201).json({ message: "New Staff User Registered Successfully by Admin!", user: record })
+    const record = await authModel.create(req.body);
+    res
+      .status(201)
+      .json({
+        message:
+          "New Staff Personnel Registered Successfully inside Central System Ledger!",
+        user: record,
+      });
   } catch (err) {
-    if (err.code === '23505') return res.status(400).json({ error: "This email or phone number is already registered!" })
-    res.status(500).json({ error: err.message })
+    if (err.code === "23505") {
+      return res
+        .status(400)
+        .json({
+          error: "This email registration data or phone number already exists!",
+        });
+    }
+    res.status(500).json({ error: err.message });
   }
 }
 
 async function getAllUsersByAdmin(req, res) {
-  const requesterCategory = req.headers['user-category']
-  if (requesterCategory !== 'Admin_Control') {
-    return res.status(403).json({ error: "Access Denied!" })
-  }
-
   try {
-    const list = await authModel.findAll()
-    res.status(200).json({ total_users: list.length, data: list })
+    const list = await authModel.findAll();
+    res.status(200).json({ total_users: list.length, data: list });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function updateStaffByAdmin(req, res) {
+  const id = req.params.id;
+  try {
+    const data = await authModel.update(id, req.body);
+    if (!data || data.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Targeted staff profile record not found!" });
+    }
+    res
+      .status(200)
+      .json({ message: "Staff Profile Parameters Updated Safely!", data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 }
 
 async function removeUserByAdmin(req, res) {
-  const requesterCategory = req.headers['user-category']
-  if (requesterCategory !== 'Admin_Control') {
-    return res.status(403).json({ error: "Access Denied!" })
-  }
-
-  const id = req.params.id
+  const id = req.params.id;
   try {
-    const deleted = await authModel.remove(id)
-    if (!deleted || deleted.length === 0) return res.status(404).json({ error: "User not found!" })
-    res.status(200).json({ message: "User deleted permanently from the system!", data: deleted })
+    const deleted = await authModel.remove(id);
+    if (!deleted || deleted.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Staff member targeting profile row not found!" });
+    }
+    res
+      .status(200)
+      .json({
+        message:
+          "Staff removed permanently from hospital systems database layers!",
+        data: deleted,
+      });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
   }
 }
 
 module.exports = {
   loginUser,
+  logoutUser,
   addUserByAdmin,
   getAllUsersByAdmin,
-  removeUserByAdmin
-}
+  updateStaffByAdmin,
+  removeUserByAdmin,
+};

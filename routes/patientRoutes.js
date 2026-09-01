@@ -1,20 +1,21 @@
 const express = require('express')
 const router = express.Router()
 const patientController = require('../controllers/patientController')
+const { protect, isReceptionist } = require('../middlewares/authMiddleware')
 
-// CREATE -> POST
-router.post('/register', patientController.registerPatient)
+// 1. CREATE -> POST
+router.post('/register', protect, isReceptionist, patientController.registerPatient)
 
-// READ ALL -> GET
-router.get('/all', patientController.getAllPatients)
+// 2. READ ALL -> GET
+router.get('/all', protect, isReceptionist, patientController.getAllPatients)
 
-// READ SINGLE -> GET
-router.get('/find/:id', patientController.getPatientById)
+// 3. READ SINGLE -> GET
+router.get('/:id', protect, isReceptionist, patientController.getPatientDetails)
 
-// UPDATE -> PUT
-router.put('/update/:id', patientController.updatePatientProfile)
+// 4. UPDATE -> PUT
+router.put('/update/:id', protect, isReceptionist, patientController.updatePatientInfo)
 
-// DELETE -> DELETE
-router.delete('/delete/:id', patientController.removePatientRecord)
+// 5. DELETE -> DELETE
+router.delete('/delete/:id', protect, isReceptionist, patientController.deletePatientRecord)
 
 module.exports = router

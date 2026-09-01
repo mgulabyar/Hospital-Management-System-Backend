@@ -1,83 +1,89 @@
-const supabase = require('../config/db')
-const crypto = require('crypto')
+const patientModel = require("../models/patientModel");
 
-async function create(data) {
-  const secureRandomId = crypto.randomBytes(4).toString('hex') 
-  const customPatientId = `PAT-${secureRandomId}` 
-
-  const { data: newPatient, error } = await supabase
-    .from('patients')
-    .insert([
-      {
-        patient_id: customPatientId,
-        patient_name: data.patient_name,
-        father_guardian_name: data.father_guardian_name,
-        age: data.age,
-        gender: data.gender,
-        phone_number: data.phone_number,
-        cnic_or_bform: data.cnic_or_bform,
-        address: data.address 
-      }
-    ])
-    .select()
-
-  if (error) throw error
-  return newPatient
+// 1. CREATE: Naya patient register karne ka logic tracking user identifiers session
+async function registerPatient(req, res) {
+  try {
+    // Model query pass explicit tracking using mapped middleware identifiers
+    const record = await patientModel.create(req.body, req.user.user_id);
+    res
+      .status(201)
+      .json({ message: "Patient Registered Successfully!", data: record });
+  } catch (err) {
+    // Duplicate phone check standard parameter code key handle
+    if (err.code === "23505") {
+      return res
+        .status(400)
+        .json({ error: "Patient with this phone number already exists!" });
+    }
+    res.status(500).json({ error: err.message });
+  }
 }
 
-async function findAll() {
-  const { data: patients, error } = await supabase
-    .from('patients')
-    .select('*')
-    
-  if (error) throw error
-  return patients
+// 2. READ ALL: Saare patients calculations and arrays retrieval lists
+async function getAllPatients(req, res) {
+  try {
+    const list = await patientModel.findAll();
+    res.status(200).json({ total: list.length, data: list });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
-async function findById(id) {
-  const { data: patient, error } = await supabase
-    .from('patients')
-    .select('*')
-    .eq('patient_id', id)
-    
-  if (error) throw error
-  return patient
+// 3. READ SINGLE: Specific single identifier lookup profiling target
+async function getPatientDetails(req, res) {
+  try {
+    const data = await patientModel.findById(req.params.id);
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: "Patient record not found!" });
+    }
+    res.status(200).json(data[0]); // Dynamic array destructing extraction
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
-async function update(id, updatedData) {
-  const { data: patient, error } = await supabase
-    .from('patients')
-    .update({
-      patient_name: updatedData.patient_name,
-      father_guardian_name: updatedData.father_guardian_name,
-      age: updatedData.age,
-      gender: updatedData.gender,
-      phone_number: updatedData.phone_number,
-      cnic_or_bform: updatedData.cnic_or_bform,
-      address: updatedData.address 
-    })
-    .eq('patient_id', id)
-    .select()
-
-  if (error) throw error
-  return patient
+// 4. UPDATE: Profile metrics data patching override data processing logic
+async function updatePatientInfo(req, res) {
+  try {
+    const data = await patientModel.update(req.params.id, req.body);
+    if (!data || data.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Targeted patient row profile records not found!" });
+    }
+    res.status(200).json({ message: "Patient information updated.", data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
-async function remove(id) {
-  const { data, error } = await supabase
-    .from('patients')
-    .delete()
-    .eq('patient_id', id)
-    .select()
-    
-  if (error) throw error
-  return data
+// ⭐ 5. DELETE (NEW): Patient tracking data permanently truncation controller function
+async function deletePatientRecord(req, res) {
+  try {
+    const deleted = await patientModel.remove(req.params.id);
+    if (!deleted || deleted.length === 0) {
+      return res
+        .status(404)
+        .json({
+          error: "Patient profile row not found to delete from database!",
+        });
+    }
+    res
+      .status(200)
+      .json({
+        message:
+          "Patient record completely deleted from central database logs!",
+        data: deleted,
+      });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 module.exports = {
-  create,
-  findAll,
-  findById,
-  update,
-  remove
-}
+  registerPatient,
+  getAllPatients,
+  getPatientDetails,
+  updatePatientInfo,
+  deletePatientRecord, // New export link verified successfully here
+};

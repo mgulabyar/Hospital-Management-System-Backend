@@ -1,89 +1,80 @@
-const patientModel = require('../models/patientModel')
+const patientModel = require("../models/patientModel");
 
-// 1. Naya Patient Register Karne Ka Function
+// 1. CREATE: Naya Patient Register Karna
 async function registerPatient(req, res) {
-  const { patient_name, father_guardian_name, age, gender, phone_number, cnic_or_bform, address } = req.body
-
-  if (!patient_name || !father_guardian_name || !age || !gender || !phone_number || !cnic_or_bform || !address) {
-    return res.status(400).json({ error: "All 7 patient fields are strictly required!" })
-  }
-
   try {
-    const newPatient = await patientModel.create(req.body)
-    res.status(201).json({ message: "Patient Registered Successfully!", patient: newPatient })
+    const record = await patientModel.create(req.body, req.user.user_id);
+    res
+      .status(201)
+      .json({ message: "Patient Registered Successfully!", data: record });
   } catch (err) {
-    console.error(err)
-    if (err.code === '23505') {
-      return res.status(400).json({ error: "This phone number is already registered!" })
+    if (err.code === "23505") {
+      return res
+        .status(400)
+        .json({ error: "Patient with this phone number already exists!" });
     }
-    res.status(500).json({ error: "Database error while saving patient." })
+    res.status(500).json({ error: err.message });
   }
 }
 
-// 2. Saare Patients Ki List Lene Ka Function
+// 2. READ ALL: Saare Patients Ki List Lene Ka Function
 async function getAllPatients(req, res) {
   try {
-    const list = await patientModel.findAll()
-    res.status(200).json({ total: list.length, data: list })
+    const list = await patientModel.findAll();
+    res.status(200).json({ total: list.length, data: list });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
   }
 }
 
-// 3. Kisi Aik Patient Ko ID Se Search Karne Ka Function
-async function getPatientById(req, res) {
-  const id = req.params.id
+// 3. READ SINGLE: ID Se Patient Dhoondna
+async function getPatientDetails(req, res) {
   try {
-    const patient = await patientModel.findById(id)
-    if (!patient || patient.length === 0) {
-      return res.status(404).json({ error: "Patient not found!" })
+    const data = await patientModel.findById(req.params.id);
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: "Patient record not found!" });
     }
-    res.status(200).json(patient)
+    res.status(200).json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
   }
 }
 
-// 4. Patient Ka Data Update (Correction) Karne Ka Function
-async function updatePatientProfile(req, res) {
-  const id = req.params.id
-  const { patient_name, father_guardian_name, age, gender, phone_number, cnic_or_bform, address } = req.body
-
-  if (!patient_name || !father_guardian_name || !age || !gender || !phone_number || !cnic_or_bform || !address) {
-    return res.status(400).json({ error: "All 7 fields are required for updates!" })
-  }
-
+// 4. UPDATE: Patient Ka Data Update (Correction) Karna
+async function updatePatientInfo(req, res) {
   try {
-    const updatedRecord = await patientModel.update(id, req.body)
-    if (!updatedRecord || updatedRecord.length === 0) {
-      return res.status(404).json({ error: "Patient profile does not exist!" })
+    const data = await patientModel.update(req.params.id, req.body);
+    if (!data || data.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Targeted patient records not found!" });
     }
-    res.status(200).json({ message: "Patient Profile Updated Successfully!", data: updatedRecord })
+    res.status(200).json({ message: "Patient information updated.", data });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
   }
 }
 
-// 5. Patient Ka Record Delete (Remove) Karne Ka Function
-async function removePatientRecord(req, res) {
-  const id = req.params.id
+async function deletePatientRecord(req, res) {
   try {
-    // Exact calling match with model.remove
-    const deletedData = await patientModel.remove(id)
-    
-    if (!deletedData || deletedData.length === 0) {
-      return res.status(404).json({ error: "Record not found to delete!" })
+    const deleted = await patientModel.remove(req.params.id);
+    if (!deleted || deleted.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Patient profile not found to delete!" });
     }
-    res.status(200).json({ message: "Patient Record Deleted Permanently!", data: deletedData })
+    res
+      .status(200)
+      .json({ message: "Patient record completely deleted!", data: deleted });
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message });
   }
 }
 
 module.exports = {
   registerPatient,
   getAllPatients,
-  getPatientById,
-  updatePatientProfile,
-  removePatientRecord
-}
+  getPatientDetails,
+  updatePatientInfo,
+  deletePatientRecord,
+};
