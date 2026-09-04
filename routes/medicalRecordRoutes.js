@@ -8,7 +8,7 @@ const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
 router.use(protect);
 
-router.post("/", authorizeRoles("doctor"), createMedicalRecord);
+router.post("/", authorizeRoles("doctor", "super_admin"), createMedicalRecord);
 
 router.get(
   "/patient/:patientId",

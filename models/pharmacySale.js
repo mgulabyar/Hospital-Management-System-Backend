@@ -2,15 +2,25 @@ const mongoose = require("mongoose");
 
 const pharmacySaleSchema = new mongoose.Schema(
   {
+    saleNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "PatientProfile",
       required: true,
     },
+
     medicalRecord: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MedicalRecord",
+      default: null,
     },
+
     itemsSold: [
       {
         medicine: {
@@ -18,11 +28,45 @@ const pharmacySaleSchema = new mongoose.Schema(
           ref: "MedicineInventory",
           required: true,
         },
-        quantity: { type: Number, required: true },
-        price: { type: Number, required: true },
+
+        medicineName: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+
+        quantity: {
+          type: Number,
+          required: true,
+          min: 1,
+        },
+
+        price: {
+          type: Number,
+          required: true,
+          min: 0,
+        },
+
+        subtotal: {
+          type: Number,
+          required: true,
+          min: 0,
+        },
       },
     ],
-    totalAmount: { type: Number, required: true },
+
+    totalAmount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    paymentStatus: {
+      type: String,
+      enum: ["Pending", "Paid"],
+      default: "Paid",
+    },
+
     pharmacist: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -32,4 +76,26 @@ const pharmacySaleSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-module.exports = mongoose.model("PharmacySale", pharmacySaleSchema);
+pharmacySaleSchema.index(
+  {
+    medicalRecord: 1,
+  },
+  {
+    unique: true,
+    sparse: true,
+  },
+);
+
+pharmacySaleSchema.index({
+  patient: 1,
+  createdAt: -1,
+});
+
+pharmacySaleSchema.index({
+  pharmacist: 1,
+  createdAt: -1,
+});
+
+module.exports =
+  mongoose.models.PharmacySale ||
+  mongoose.model("PharmacySale", pharmacySaleSchema);

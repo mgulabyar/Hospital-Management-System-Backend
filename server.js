@@ -10,6 +10,8 @@ const medicalRecordRoutes = require('./routes/medicalRecordRoutes.js');
 const labRoutes = require('./routes/labRoutes.js');
 const pharmacyRoutes = require('./routes/pharmacyRoutes.js');
 const billingRoutes = require('./routes/billingRoutes.js');
+const departmentRoutes = require("./routes/departmentRoutes.js");
+const appointmentRoutes = require("./routes/appointmentRoutes.js");
 
 
 
@@ -30,6 +32,8 @@ app.use('/api/medical-records', medicalRecordRoutes);
 app.use('/api/lab', labRoutes);
 app.use('/api/pharmacy', pharmacyRoutes);
 app.use("/api/billing", billingRoutes);
+app.use("/api/departments", departmentRoutes);
+app.use("/api/appointments", appointmentRoutes);
 
 
 app.get("/", (req, res) => {

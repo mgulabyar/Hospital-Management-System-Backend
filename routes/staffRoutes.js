@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+
 const {
   createStaff,
   getAllStaff,
@@ -7,7 +8,11 @@ const {
   deleteUserAccount,
   toggleStaffStatus,
 } = require("../controllers/staffController");
-const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
+
+const {
+  protect,
+  authorizeRoles,
+} = require("../middlewares/authMiddleware");
 
 router.use(protect);
 router.use(authorizeRoles("super_admin"));
