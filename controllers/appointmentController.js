@@ -3,6 +3,7 @@ const PatientProfile = require("../models/patientProfile");
 const User = require("../models/User");
 const Department = require("../models/Department");
 const AppointmentToken = require("../models/appointmentToken");
+const { createAuditLog } = require("../utils/auditLogger");
 
 const APPOINTMENT_STATUSES = [
   "Scheduled",
@@ -204,6 +205,20 @@ const createAppointment = async (req, res) => {
       !appointmentDate ||
       !appointmentTime
     ) {
+      await createAuditLog({
+        req,
+        action: "CREATE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description:
+          "Appointment booking failed because required booking fields were missing",
+        status: "FAILURE",
+        metadata: {
+          patientId: patient || null,
+          doctorId: doctor || null,
+          departmentId: department || null,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message:
@@ -212,6 +227,18 @@ const createAppointment = async (req, res) => {
     }
 
     if (!isValidTimeFormat(appointmentTime)) {
+      await createAuditLog({
+        req,
+        action: "CREATE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description:
+          "Appointment booking failed because time format was invalid",
+        status: "FAILURE",
+        metadata: {
+          appointmentTime,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Appointment time must follow 24-hour HH:MM format",
@@ -221,6 +248,17 @@ const createAppointment = async (req, res) => {
     const normalizedDate = normalizeAppointmentDate(appointmentDate);
 
     if (!normalizedDate) {
+      await createAuditLog({
+        req,
+        action: "CREATE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: "Appointment booking failed because date was invalid",
+        status: "FAILURE",
+        metadata: {
+          appointmentDate,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Please provide a valid appointment date",
@@ -231,6 +269,18 @@ const createAppointment = async (req, res) => {
     today.setHours(0, 0, 0, 0);
 
     if (normalizedDate < today) {
+      await createAuditLog({
+        req,
+        action: "CREATE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description:
+          "Appointment booking rejected because selected date was in the past",
+        status: "FAILURE",
+        metadata: {
+          appointmentDate,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Appointments cannot be booked for a past date",
@@ -244,6 +294,19 @@ const createAppointment = async (req, res) => {
     });
 
     if (!referenceValidation.valid) {
+      await createAuditLog({
+        req,
+        action: "CREATE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Appointment booking failed: ${referenceValidation.message}`,
+        status: "FAILURE",
+        metadata: {
+          patientId: patient,
+          doctorId: doctor,
+          departmentId: department,
+        },
+      });
+
       return res.status(referenceValidation.statusCode).json({
         success: false,
         message: referenceValidation.message,
@@ -257,6 +320,21 @@ const createAppointment = async (req, res) => {
     });
 
     if (!slotAvailable) {
+      await createAuditLog({
+        req,
+        action: "CREATE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Appointment booking rejected because ${referenceValidation.doctor.name} already has an active booking in the selected slot`,
+        status: "FAILURE",
+        metadata: {
+          patientId: patient,
+          doctorId: doctor,
+          departmentId: department,
+          appointmentDate: normalizedDate,
+          appointmentTime,
+        },
+      });
+
       return res.status(409).json({
         success: false,
         message:
@@ -279,12 +357,42 @@ const createAppointment = async (req, res) => {
 
     const populatedAppointment = await populateAppointment(appointment._id);
 
+    await createAuditLog({
+      req,
+      action: "CREATE_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: `Appointment ${appointment.appointmentNumber} booked for ${referenceValidation.patient.name}`,
+      status: "SUCCESS",
+      entityType: "Appointment",
+      entityId: appointment._id,
+      metadata: {
+        appointmentNumber: appointment.appointmentNumber,
+        patientName: referenceValidation.patient.name,
+        patientId: referenceValidation.patient.patientId,
+        doctorName: referenceValidation.doctor.name,
+        department: referenceValidation.department.name,
+        appointmentDate: normalizedDate,
+        appointmentTime,
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message: "Appointment booked successfully",
       data: populatedAppointment,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "CREATE_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: "Appointment booking failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -401,6 +509,16 @@ const getAppointmentById = async (req, res) => {
       });
     }
 
+    if (
+      req.user.role === "doctor" &&
+      appointment.doctor?._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to view this appointment",
+      });
+    }
+
     return res.status(200).json({
       success: true,
       data: appointment,
@@ -427,6 +545,17 @@ const rescheduleAppointment = async (req, res) => {
     const appointment = await Appointment.findById(req.params.id);
 
     if (!appointment) {
+      await createAuditLog({
+        req,
+        action: "RESCHEDULE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Reschedule failed because appointment ${req.params.id} was not found`,
+        status: "FAILURE",
+        metadata: {
+          appointmentId: req.params.id,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Appointment was not found",
@@ -442,6 +571,14 @@ const rescheduleAppointment = async (req, res) => {
         message: "Completed or cancelled appointments cannot be rescheduled",
       });
     }
+
+    const previousData = {
+      doctorId: appointment.doctor.toString(),
+      departmentId: appointment.department.toString(),
+      appointmentDate: appointment.appointmentDate,
+      appointmentTime: appointment.appointmentTime,
+      status: appointment.status,
+    };
 
     const nextDoctorId = doctor || appointment.doctor.toString();
     const nextDepartmentId = department || appointment.department.toString();
@@ -481,6 +618,21 @@ const rescheduleAppointment = async (req, res) => {
     });
 
     if (!referenceValidation.valid) {
+      await createAuditLog({
+        req,
+        action: "RESCHEDULE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Reschedule failed for ${appointment.appointmentNumber}: ${referenceValidation.message}`,
+        status: "FAILURE",
+        entityType: "Appointment",
+        entityId: appointment._id,
+        metadata: {
+          previousData,
+          attemptedDoctorId: nextDoctorId,
+          attemptedDepartmentId: nextDepartmentId,
+        },
+      });
+
       return res.status(referenceValidation.statusCode).json({
         success: false,
         message: referenceValidation.message,
@@ -495,6 +647,22 @@ const rescheduleAppointment = async (req, res) => {
     });
 
     if (!slotAvailable) {
+      await createAuditLog({
+        req,
+        action: "RESCHEDULE_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Reschedule rejected because selected doctor slot is already occupied`,
+        status: "FAILURE",
+        entityType: "Appointment",
+        entityId: appointment._id,
+        metadata: {
+          appointmentNumber: appointment.appointmentNumber,
+          previousData,
+          attemptedDate: normalizedDate,
+          attemptedTime: nextTime,
+        },
+      });
+
       return res.status(409).json({
         success: false,
         message:
@@ -516,12 +684,44 @@ const rescheduleAppointment = async (req, res) => {
 
     const populatedAppointment = await populateAppointment(appointment._id);
 
+    await createAuditLog({
+      req,
+      action: "RESCHEDULE_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: `Appointment ${appointment.appointmentNumber} rescheduled successfully`,
+      status: "SUCCESS",
+      entityType: "Appointment",
+      entityId: appointment._id,
+      metadata: {
+        previousData,
+        newData: {
+          doctorName: referenceValidation.doctor.name,
+          departmentName: referenceValidation.department.name,
+          appointmentDate: normalizedDate,
+          appointmentTime: nextTime,
+          rescheduleReason: appointment.rescheduleReason,
+        },
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: "Appointment rescheduled successfully",
       data: populatedAppointment,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "RESCHEDULE_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: "Appointment reschedule failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        appointmentId: req.params.id,
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -544,6 +744,17 @@ const cancelAppointment = async (req, res) => {
     const appointment = await Appointment.findById(req.params.id);
 
     if (!appointment) {
+      await createAuditLog({
+        req,
+        action: "CANCEL_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Appointment cancellation failed because ${req.params.id} was not found`,
+        status: "FAILURE",
+        metadata: {
+          appointmentId: req.params.id,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Appointment was not found",
@@ -564,6 +775,8 @@ const cancelAppointment = async (req, res) => {
       });
     }
 
+    const previousStatus = appointment.status;
+
     appointment.status = "Cancelled";
     appointment.cancelledAt = new Date();
     appointment.cancellationReason =
@@ -573,12 +786,39 @@ const cancelAppointment = async (req, res) => {
 
     const populatedAppointment = await populateAppointment(appointment._id);
 
+    await createAuditLog({
+      req,
+      action: "CANCEL_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: `Appointment ${appointment.appointmentNumber} cancelled successfully`,
+      status: "SUCCESS",
+      entityType: "Appointment",
+      entityId: appointment._id,
+      metadata: {
+        appointmentNumber: appointment.appointmentNumber,
+        previousStatus,
+        cancellationReason: appointment.cancellationReason,
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: "Appointment cancelled successfully",
       data: populatedAppointment,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "CANCEL_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: "Appointment cancellation failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        appointmentId: req.params.id,
+        error: error.message,
+      },
+    });
+
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to cancel appointment",
@@ -594,6 +834,17 @@ const checkInAppointment = async (req, res) => {
       .populate("patient", "patientId name");
 
     if (!appointment) {
+      await createAuditLog({
+        req,
+        action: "CHECK_IN_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Appointment check-in failed because ${req.params.id} was not found`,
+        status: "FAILURE",
+        metadata: {
+          appointmentId: req.params.id,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Appointment was not found",
@@ -645,6 +896,21 @@ const checkInAppointment = async (req, res) => {
     });
 
     if (existingToken) {
+      await createAuditLog({
+        req,
+        action: "CHECK_IN_APPOINTMENT",
+        module: "APPOINTMENTS",
+        description: `Appointment ${appointment.appointmentNumber} already has token ${existingToken.displayToken}`,
+        status: "FAILURE",
+        entityType: "Appointment",
+        entityId: appointment._id,
+        metadata: {
+          appointmentNumber: appointment.appointmentNumber,
+          tokenId: existingToken._id,
+          displayToken: existingToken.displayToken,
+        },
+      });
+
       return res.status(409).json({
         success: false,
         message: "A patient visit token already exists for this appointment",
@@ -698,6 +964,25 @@ const checkInAppointment = async (req, res) => {
 
     const populatedAppointment = await populateAppointment(appointment._id);
 
+    await createAuditLog({
+      req,
+      action: "CHECK_IN_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: `Appointment ${appointment.appointmentNumber} checked in and patient visit token ${token.displayToken} created`,
+      status: "SUCCESS",
+      entityType: "Appointment",
+      entityId: appointment._id,
+      metadata: {
+        appointmentNumber: appointment.appointmentNumber,
+        patientName: appointment.patient.name,
+        patientId: appointment.patient.patientId,
+        doctorName: appointment.doctor.name,
+        department: appointment.department.name,
+        generatedToken: token.displayToken,
+        tokenId: token._id,
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message:
@@ -708,6 +993,18 @@ const checkInAppointment = async (req, res) => {
       },
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "CHECK_IN_APPOINTMENT",
+      module: "APPOINTMENTS",
+      description: "Appointment check-in failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        appointmentId: req.params.id,
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -749,6 +1046,8 @@ const updateAppointmentStatus = async (req, res) => {
       });
     }
 
+    const previousStatus = appointment.status;
+
     appointment.status = status;
 
     if (status === "Checked-In") {
@@ -767,12 +1066,39 @@ const updateAppointmentStatus = async (req, res) => {
 
     const populatedAppointment = await populateAppointment(appointment._id);
 
+    await createAuditLog({
+      req,
+      action: "UPDATE_APPOINTMENT_STATUS",
+      module: "APPOINTMENTS",
+      description: `Appointment ${appointment.appointmentNumber} status changed from ${previousStatus} to ${status}`,
+      status: "SUCCESS",
+      entityType: "Appointment",
+      entityId: appointment._id,
+      metadata: {
+        appointmentNumber: appointment.appointmentNumber,
+        previousStatus,
+        currentStatus: status,
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: "Appointment status updated successfully",
       data: populatedAppointment,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "UPDATE_APPOINTMENT_STATUS",
+      module: "APPOINTMENTS",
+      description: "Appointment status update failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        appointmentId: req.params.id,
+        error: error.message,
+      },
+    });
+
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to update appointment status",

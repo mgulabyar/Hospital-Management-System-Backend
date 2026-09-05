@@ -1,12 +1,14 @@
 const Invoice = require("../models/Invoice");
 const AppointmentToken = require("../models/appointmentToken");
-const MedicalRecord = require("../models/medicalRecord");
-// const MedicalRecord = require("../models/medicalRecord");
+const MedicalRecord = require("../models/MedicalRecord");
 const LabReport = require("../models/LabReport");
-const PharmacySale = require("../models/pharmacySale");
+const PharmacySale = require("../models/PharmacySale");
 const User = require("../models/User");
 const PatientProfile = require("../models/patientProfile");
 const Department = require("../models/Department");
+const Appointment = require("../models/Appointment");
+const MedicineInventory = require("../models/medicineInventory");
+const { createAuditLog } = require("../utils/auditLogger");
 
 const PAYMENT_METHODS = ["Cash", "Card", "Insurance", "Online"];
 
@@ -240,6 +242,15 @@ const generateInvoiceSummary = async (req, res) => {
     const { tokenId, refreshCharges = false } = req.body;
 
     if (!tokenId) {
+      await createAuditLog({
+        req,
+        action: "GENERATE_INVOICE",
+        module: "BILLING",
+        description:
+          "Invoice generation failed because appointment token id was missing",
+        status: "FAILURE",
+      });
+
       return res.status(400).json({
         success: false,
         message: "Appointment token id is required",
@@ -251,6 +262,17 @@ const generateInvoiceSummary = async (req, res) => {
       .populate("departmentRef", "name code consultationFee");
 
     if (!token) {
+      await createAuditLog({
+        req,
+        action: "GENERATE_INVOICE",
+        module: "BILLING",
+        description: `Invoice generation failed because token ${tokenId} was not found`,
+        status: "FAILURE",
+        metadata: {
+          tokenId,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Appointment token was not found",
@@ -258,6 +280,20 @@ const generateInvoiceSummary = async (req, res) => {
     }
 
     if (token.status !== "Completed") {
+      await createAuditLog({
+        req,
+        action: "GENERATE_INVOICE",
+        module: "BILLING",
+        description: `Invoice generation rejected because token ${token.displayToken} is ${token.status}`,
+        status: "FAILURE",
+        entityType: "AppointmentToken",
+        entityId: token._id,
+        metadata: {
+          displayToken: token.displayToken,
+          visitStatus: token.status,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message:
@@ -270,6 +306,19 @@ const generateInvoiceSummary = async (req, res) => {
     });
 
     if (!medicalRecord) {
+      await createAuditLog({
+        req,
+        action: "GENERATE_INVOICE",
+        module: "BILLING",
+        description: `Invoice generation failed because medical record is missing for token ${token.displayToken}`,
+        status: "FAILURE",
+        entityType: "AppointmentToken",
+        entityId: token._id,
+        metadata: {
+          displayToken: token.displayToken,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Medical record was not found for this appointment token",
@@ -283,6 +332,21 @@ const generateInvoiceSummary = async (req, res) => {
     if (existingInvoice && !refreshCharges) {
       const populatedInvoice = await populateInvoice(existingInvoice._id);
 
+      await createAuditLog({
+        req,
+        action: "LOAD_INVOICE",
+        module: "BILLING",
+        description: `Existing invoice ${existingInvoice.invoiceNumber} loaded for token ${token.displayToken}`,
+        status: "SUCCESS",
+        entityType: "Invoice",
+        entityId: existingInvoice._id,
+        metadata: {
+          invoiceNumber: existingInvoice.invoiceNumber,
+          displayToken: token.displayToken,
+          paymentStatus: existingInvoice.paymentStatus,
+        },
+      });
+
       return res.status(200).json({
         success: true,
         message:
@@ -294,6 +358,19 @@ const generateInvoiceSummary = async (req, res) => {
     }
 
     if (existingInvoice?.paymentStatus === "Paid") {
+      await createAuditLog({
+        req,
+        action: "REFRESH_INVOICE",
+        module: "BILLING",
+        description: `Invoice refresh rejected because invoice ${existingInvoice.invoiceNumber} is already paid`,
+        status: "FAILURE",
+        entityType: "Invoice",
+        entityId: existingInvoice._id,
+        metadata: {
+          invoiceNumber: existingInvoice.invoiceNumber,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message:
@@ -304,6 +381,7 @@ const generateInvoiceSummary = async (req, res) => {
     const chargeSummary = await calculateInvoiceCharges(token, medicalRecord);
 
     let invoice;
+    let invoiceAction;
 
     if (existingInvoice) {
       const newRemainingBalance = Math.max(
@@ -325,7 +403,9 @@ const generateInvoiceSummary = async (req, res) => {
             : "Partial";
 
       await existingInvoice.save();
+
       invoice = existingInvoice;
+      invoiceAction = "REFRESH_INVOICE";
     } else {
       const invoiceNumber = await getNextInvoiceNumber();
 
@@ -344,6 +424,8 @@ const generateInvoiceSummary = async (req, res) => {
         paymentMethod: "Pending",
         paymentStatus: "Unpaid",
       });
+
+      invoiceAction = "GENERATE_INVOICE";
     }
 
     if (chargeSummary.labReports.length > 0) {
@@ -361,6 +443,28 @@ const generateInvoiceSummary = async (req, res) => {
 
     const populatedInvoice = await populateInvoice(invoice._id);
 
+    await createAuditLog({
+      req,
+      action: invoiceAction,
+      module: "BILLING",
+      description: `Invoice ${invoice.invoiceNumber} ${
+        existingInvoice ? "refreshed" : "generated"
+      } for token ${token.displayToken}`,
+      status: "SUCCESS",
+      entityType: "Invoice",
+      entityId: invoice._id,
+      metadata: {
+        invoiceNumber: invoice.invoiceNumber,
+        displayToken: token.displayToken,
+        patientName: token.patient?.name || "Unknown Patient",
+        consultationFee: invoice.consultationFee,
+        labFee: invoice.labFee,
+        pharmacyFee: invoice.pharmacyFee,
+        grossTotal: invoice.grossTotal,
+        remainingBalance: invoice.remainingBalance,
+      },
+    });
+
     return res.status(existingInvoice ? 200 : 201).json({
       success: true,
       message: existingInvoice
@@ -369,6 +473,18 @@ const generateInvoiceSummary = async (req, res) => {
       data: populatedInvoice,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "GENERATE_INVOICE",
+      module: "BILLING",
+      description: "Invoice generation failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        tokenId: req.body?.tokenId || null,
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -389,6 +505,19 @@ const settlePaymentInvoice = async (req, res) => {
     const { paymentMethod, amount, paymentReference } = req.body;
 
     if (!PAYMENT_METHODS.includes(paymentMethod)) {
+      await createAuditLog({
+        req,
+        action: "SETTLE_INVOICE_PAYMENT",
+        module: "BILLING",
+        description:
+          "Invoice payment failed because an invalid payment method was submitted",
+        status: "FAILURE",
+        metadata: {
+          invoiceId: req.params.id,
+          paymentMethod: paymentMethod || "",
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Please identify a valid payment settlement method",
@@ -398,15 +527,42 @@ const settlePaymentInvoice = async (req, res) => {
     const paymentAmount = Number(amount);
 
     if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      await createAuditLog({
+        req,
+        action: "SETTLE_INVOICE_PAYMENT",
+        module: "BILLING",
+        description:
+          "Invoice payment failed because payment amount was invalid",
+        status: "FAILURE",
+        metadata: {
+          invoiceId: req.params.id,
+          amount,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Payment amount must be greater than zero",
       });
     }
 
-    const invoice = await Invoice.findById(req.params.id);
+    const invoice = await Invoice.findById(req.params.id).populate(
+      "patient",
+      "patientId name",
+    );
 
     if (!invoice) {
+      await createAuditLog({
+        req,
+        action: "SETTLE_INVOICE_PAYMENT",
+        module: "BILLING",
+        description: `Invoice payment failed because invoice ${req.params.id} was not found`,
+        status: "FAILURE",
+        metadata: {
+          invoiceId: req.params.id,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Target invoice record was not found",
@@ -414,6 +570,19 @@ const settlePaymentInvoice = async (req, res) => {
     }
 
     if (invoice.paymentStatus === "Paid") {
+      await createAuditLog({
+        req,
+        action: "SETTLE_INVOICE_PAYMENT",
+        module: "BILLING",
+        description: `Invoice payment rejected because ${invoice.invoiceNumber} is already paid`,
+        status: "FAILURE",
+        entityType: "Invoice",
+        entityId: invoice._id,
+        metadata: {
+          invoiceNumber: invoice.invoiceNumber,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "This invoice has already been settled",
@@ -421,11 +590,30 @@ const settlePaymentInvoice = async (req, res) => {
     }
 
     if (paymentAmount > invoice.remainingBalance) {
+      await createAuditLog({
+        req,
+        action: "SETTLE_INVOICE_PAYMENT",
+        module: "BILLING",
+        description: `Invoice payment rejected because amount exceeds remaining balance for ${invoice.invoiceNumber}`,
+        status: "FAILURE",
+        entityType: "Invoice",
+        entityId: invoice._id,
+        metadata: {
+          invoiceNumber: invoice.invoiceNumber,
+          attemptedAmount: paymentAmount,
+          remainingBalance: invoice.remainingBalance,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: `Payment cannot exceed the remaining balance of ${invoice.remainingBalance}`,
       });
     }
+
+    const previousPaymentStatus = invoice.paymentStatus;
+    const previousAmountPaid = invoice.amountPaid;
+    const previousRemainingBalance = invoice.remainingBalance;
 
     invoice.amountPaid += paymentAmount;
     invoice.remainingBalance = Math.max(
@@ -444,12 +632,34 @@ const settlePaymentInvoice = async (req, res) => {
       receivedAt: new Date(),
     });
 
-    invoice.paymentStatus =
-      invoice.remainingBalance === 0 ? "Paid" : "Partial";
+    invoice.paymentStatus = invoice.remainingBalance === 0 ? "Paid" : "Partial";
 
     await invoice.save();
 
     const populatedInvoice = await populateInvoice(invoice._id);
+
+    await createAuditLog({
+      req,
+      action: "SETTLE_INVOICE_PAYMENT",
+      module: "BILLING",
+      description: `${invoice.paymentStatus === "Paid" ? "Full" : "Partial"} payment of ${paymentAmount} recorded for invoice ${invoice.invoiceNumber}`,
+      status: "SUCCESS",
+      entityType: "Invoice",
+      entityId: invoice._id,
+      metadata: {
+        invoiceNumber: invoice.invoiceNumber,
+        patientName: invoice.patient?.name || "Unknown Patient",
+        paymentMethod,
+        paymentAmount,
+        paymentReference: paymentReference?.trim() || "",
+        previousPaymentStatus,
+        currentPaymentStatus: invoice.paymentStatus,
+        previousAmountPaid,
+        currentAmountPaid: invoice.amountPaid,
+        previousRemainingBalance,
+        currentRemainingBalance: invoice.remainingBalance,
+      },
+    });
 
     return res.status(200).json({
       success: true,
@@ -460,6 +670,18 @@ const settlePaymentInvoice = async (req, res) => {
       data: populatedInvoice,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "SETTLE_INVOICE_PAYMENT",
+      module: "BILLING",
+      description: "Invoice payment settlement failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        invoiceId: req.params.id,
+        error: error.message,
+      },
+    });
+
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to settle invoice payment",
@@ -469,13 +691,8 @@ const settlePaymentInvoice = async (req, res) => {
 
 const getInvoices = async (req, res) => {
   try {
-    const {
-      patient,
-      paymentStatus,
-      paymentMethod,
-      startDate,
-      endDate,
-    } = req.query;
+    const { patient, paymentStatus, paymentMethod, startDate, endDate } =
+      req.query;
 
     const filter = {};
 
@@ -533,27 +750,145 @@ const getInvoices = async (req, res) => {
 
 const getHospitalDashboardData = async (req, res) => {
   try {
+    const { date } = req.query;
+
+    const selectedDate = date ? new Date(date) : new Date();
+
+    if (Number.isNaN(selectedDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid dashboard date",
+      });
+    }
+
+    const startOfDay = new Date(selectedDate);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(selectedDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
     const [
       totalPatients,
       totalStaff,
+      activeStaff,
+      completedConsultations,
+      pendingVisits,
+      inConsultationVisits,
+      completedVisitsToday,
+      scheduledAppointments,
+      checkedInAppointments,
       completedAppointments,
+      cancelledAppointments,
+      noShowAppointments,
+      pendingLabTests,
+      lowStockMedicines,
       paidInvoiceSummary,
-      unpaidInvoiceSummary,
+      outstandingInvoiceSummary,
       pharmacySalesSummary,
+      departmentVisitSummary,
+      doctorWorkloadSummary,
+      revenueBreakdownSummary,
     ] = await Promise.all([
       PatientProfile.countDocuments({}),
+
       User.countDocuments({
         role: {
           $ne: "super_admin",
         },
       }),
+
+      User.countDocuments({
+        role: {
+          $ne: "super_admin",
+        },
+        isActive: true,
+      }),
+
       AppointmentToken.countDocuments({
         status: "Completed",
       }),
+
+      AppointmentToken.countDocuments({
+        status: "Pending",
+        visitDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      AppointmentToken.countDocuments({
+        status: "In-Consultation",
+        visitDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      AppointmentToken.countDocuments({
+        status: "Completed",
+        visitDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      Appointment.countDocuments({
+        status: "Scheduled",
+        appointmentDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      Appointment.countDocuments({
+        status: "Checked-In",
+        appointmentDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      Appointment.countDocuments({
+        status: "Completed",
+        appointmentDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      Appointment.countDocuments({
+        status: "Cancelled",
+        appointmentDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      Appointment.countDocuments({
+        status: "No-Show",
+        appointmentDate: {
+          $gte: startOfDay,
+          $lte: endOfDay,
+        },
+      }),
+
+      LabReport.countDocuments({
+        status: "Pending",
+      }),
+
+      MedicineInventory.countDocuments({
+        isActive: true,
+        $expr: {
+          $lte: ["$availableStock", "$reorderLevel"],
+        },
+      }),
+
       Invoice.aggregate([
         {
           $match: {
-            paymentStatus: "Paid",
+            paymentStatus: {
+              $in: ["Paid", "Partial"],
+            },
           },
         },
         {
@@ -565,6 +900,7 @@ const getHospitalDashboardData = async (req, res) => {
           },
         },
       ]),
+
       Invoice.aggregate([
         {
           $match: {
@@ -582,6 +918,7 @@ const getHospitalDashboardData = async (req, res) => {
           },
         },
       ]),
+
       PharmacySale.aggregate([
         {
           $group: {
@@ -592,28 +929,216 @@ const getHospitalDashboardData = async (req, res) => {
           },
         },
       ]),
+
+      AppointmentToken.aggregate([
+        {
+          $match: {
+            visitDate: {
+              $gte: startOfDay,
+              $lte: endOfDay,
+            },
+          },
+        },
+        {
+          $group: {
+            _id: "$departmentRef",
+            visits: {
+              $sum: 1,
+            },
+            completedVisits: {
+              $sum: {
+                $cond: [
+                  {
+                    $eq: ["$status", "Completed"],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "departments",
+            localField: "_id",
+            foreignField: "_id",
+            as: "departmentInfo",
+          },
+        },
+        {
+          $unwind: {
+            path: "$departmentInfo",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            departmentId: "$_id",
+            departmentName: {
+              $ifNull: ["$departmentInfo.name", "Unknown Department"],
+            },
+            departmentCode: {
+              $ifNull: ["$departmentInfo.code", "OPD"],
+            },
+            visits: 1,
+            completedVisits: 1,
+          },
+        },
+        {
+          $sort: {
+            visits: -1,
+          },
+        },
+      ]),
+
+      AppointmentToken.aggregate([
+        {
+          $match: {
+            visitDate: {
+              $gte: startOfDay,
+              $lte: endOfDay,
+            },
+          },
+        },
+        {
+          $group: {
+            _id: "$doctor",
+            visits: {
+              $sum: 1,
+            },
+            completedVisits: {
+              $sum: {
+                $cond: [
+                  {
+                    $eq: ["$status", "Completed"],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "users",
+            localField: "_id",
+            foreignField: "_id",
+            as: "doctorInfo",
+          },
+        },
+        {
+          $unwind: {
+            path: "$doctorInfo",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            doctorId: "$_id",
+            doctorName: {
+              $ifNull: ["$doctorInfo.name", "Unknown Doctor"],
+            },
+            visits: 1,
+            completedVisits: 1,
+          },
+        },
+        {
+          $sort: {
+            visits: -1,
+          },
+        },
+      ]),
+
+      Invoice.aggregate([
+        {
+          $group: {
+            _id: null,
+            consultationRevenue: {
+              $sum: "$consultationFee",
+            },
+            labRevenue: {
+              $sum: "$labFee",
+            },
+            pharmacyRevenue: {
+              $sum: "$pharmacyFee",
+            },
+            invoiceGrossTotal: {
+              $sum: "$grossTotal",
+            },
+            collectedRevenue: {
+              $sum: "$amountPaid",
+            },
+          },
+        },
+      ]),
     ]);
 
-    const revenueCollected =
+    const paidRevenue =
       paidInvoiceSummary.length > 0 ? paidInvoiceSummary[0].total : 0;
 
     const outstandingBalance =
-      unpaidInvoiceSummary.length > 0 ? unpaidInvoiceSummary[0].total : 0;
+      outstandingInvoiceSummary.length > 0
+        ? outstandingInvoiceSummary[0].total
+        : 0;
 
     const pharmacySalesTotal =
-      pharmacySalesSummary.length > 0
-        ? pharmacySalesSummary[0].total
-        : 0;
+      pharmacySalesSummary.length > 0 ? pharmacySalesSummary[0].total : 0;
+
+    const revenueBreakdown =
+      revenueBreakdownSummary.length > 0
+        ? revenueBreakdownSummary[0]
+        : {
+            consultationRevenue: 0,
+            labRevenue: 0,
+            pharmacyRevenue: 0,
+            invoiceGrossTotal: 0,
+            collectedRevenue: 0,
+          };
 
     return res.status(200).json({
       success: true,
       data: {
+        selectedDate: startOfDay,
+
         totalPatientsRegistered: totalPatients,
         totalHospitalStaffAccounts: totalStaff,
-        completedConsultationsCount: completedAppointments,
-        netFinancialRevenueCollected: revenueCollected,
+        activeHospitalStaffAccounts: activeStaff,
+        completedConsultationsCount: completedConsultations,
+
+        netFinancialRevenueCollected: paidRevenue,
         outstandingBalance,
         pharmacySalesTotal,
+
+        dailyOperations: {
+          pendingVisits,
+          inConsultationVisits,
+          completedVisits: completedVisitsToday,
+          pendingLabTests,
+          lowStockMedicines,
+        },
+
+        appointmentStatusCounts: {
+          scheduled: scheduledAppointments,
+          checkedIn: checkedInAppointments,
+          completed: completedAppointments,
+          cancelled: cancelledAppointments,
+          noShow: noShowAppointments,
+        },
+
+        departmentVisitSummary,
+        doctorWorkloadSummary,
+
+        revenueBreakdown: {
+          consultationRevenue: revenueBreakdown.consultationRevenue || 0,
+          labRevenue: revenueBreakdown.labRevenue || 0,
+          pharmacyRevenue: revenueBreakdown.pharmacyRevenue || 0,
+          invoiceGrossTotal: revenueBreakdown.invoiceGrossTotal || 0,
+          collectedRevenue: revenueBreakdown.collectedRevenue || 0,
+        },
       },
     });
   } catch (error) {

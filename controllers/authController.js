@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
+const { createAuditLog } = require("../utils/auditLogger");
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
@@ -10,23 +11,52 @@ const registerUser = async (req, res) => {
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Please fill all required fields" });
+      await createAuditLog({
+        req,
+        action: "REGISTER_USER",
+        module: "AUTH",
+        description:
+          "Account registration failed because required fields were missing",
+        status: "FAILURE",
+        metadata: {
+          email: email || "",
+        },
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: "Please fill all required fields",
+      });
     }
 
-    let user = await User.findOne({ email });
+    let user = await User.findOne({
+      email: email.trim().toLowerCase(),
+    });
 
     if (user) {
-      user.name = name;
+      user.name = name.trim();
       user.password = password;
-      if (role) user.role = role;
+
+      if (role) {
+        user.role = role;
+      }
 
       await user.save();
 
+      await createAuditLog({
+        req,
+        action: "UPDATE_USER_ACCOUNT",
+        module: "AUTH",
+        description: `Account profile updated for ${user.email}`,
+        status: "SUCCESS",
+        entityType: "User",
+        entityId: user._id,
+        performer: user,
+      });
+
       return res.status(200).json({
         success: true,
-        message: "Account updated and overwritten successfully inside database",
+        message: "Account updated successfully",
         data: {
           _id: user._id,
           name: user.name,
@@ -37,7 +67,23 @@ const registerUser = async (req, res) => {
       });
     }
 
-    user = await User.create({ name, email, password, role });
+    user = await User.create({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password,
+      role,
+    });
+
+    await createAuditLog({
+      req,
+      action: "REGISTER_USER",
+      module: "AUTH",
+      description: `New account registered for ${user.email}`,
+      status: "SUCCESS",
+      entityType: "User",
+      entityId: user._id,
+      performer: user,
+    });
 
     return res.status(201).json({
       success: true,
@@ -51,7 +97,21 @@ const registerUser = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    await createAuditLog({
+      req,
+      action: "REGISTER_USER",
+      module: "AUTH",
+      description: "Account registration failed due to server error",
+      status: "FAILURE",
+      metadata: {
+        error: error.message,
+      },
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -60,31 +120,102 @@ const loginUser = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Please provide email and password" });
-    }
-
-    const user = await User.findOne({ email });
-
-    if (user && (await user.matchPassword(password))) {
-      return res.json({
-        success: true,
-        data: {
-          _id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          token: generateToken(user._id),
+      await createAuditLog({
+        req,
+        action: "LOGIN",
+        module: "AUTH",
+        description: "Login failed because email or password was missing",
+        status: "FAILURE",
+        metadata: {
+          email: email || "",
         },
       });
-    } else {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid email or password" });
+
+      return res.status(400).json({
+        success: false,
+        message: "Please provide email and password",
+      });
     }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const user = await User.findOne({
+      email: normalizedEmail,
+    });
+
+    if (!user || !(await user.matchPassword(password))) {
+      await createAuditLog({
+        req,
+        action: "LOGIN",
+        module: "AUTH",
+        description: `Failed login attempt for ${normalizedEmail}`,
+        status: "FAILURE",
+        metadata: {
+          email: normalizedEmail,
+        },
+      });
+
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    if (!user.isActive) {
+      await createAuditLog({
+        req,
+        action: "LOGIN",
+        module: "AUTH",
+        description: `Login blocked for inactive account ${user.email}`,
+        status: "FAILURE",
+        entityType: "User",
+        entityId: user._id,
+        performer: user,
+      });
+
+      return res.status(403).json({
+        success: false,
+        message: "This staff account is inactive. Please contact Super Admin.",
+      });
+    }
+
+    await createAuditLog({
+      req,
+      action: "LOGIN",
+      module: "AUTH",
+      description: `Successful login for ${user.email}`,
+      status: "SUCCESS",
+      entityType: "User",
+      entityId: user._id,
+      performer: user,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        token: generateToken(user._id),
+      },
+    });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    await createAuditLog({
+      req,
+      action: "LOGIN",
+      module: "AUTH",
+      description: "Login failed due to server error",
+      status: "FAILURE",
+      metadata: {
+        error: error.message,
+      },
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -93,6 +224,7 @@ const logoutUser = async (req, res) => {
     const targetUserId = req.user._id;
 
     const userRecord = await User.findById(targetUserId);
+
     if (!userRecord) {
       return res.status(404).json({
         success: false,
@@ -100,14 +232,26 @@ const logoutUser = async (req, res) => {
       });
     }
 
-    await User.findByIdAndDelete(targetUserId);
+    await createAuditLog({
+      req,
+      action: "LOGOUT",
+      module: "AUTH",
+      description: `Session logout requested by ${userRecord.email}`,
+      status: "SUCCESS",
+      entityType: "User",
+      entityId: userRecord._id,
+      performer: userRecord,
+    });
 
     return res.status(200).json({
       success: true,
-      message: `Session terminated. User profile '${userRecord.name}' with email '${userRecord.email}' has been permanently deleted from database memory.`,
+      message: "Session terminated successfully",
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 

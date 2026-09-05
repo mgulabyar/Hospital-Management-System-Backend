@@ -2,6 +2,7 @@ const AppointmentToken = require("../models/appointmentToken");
 const User = require("../models/User");
 const Department = require("../models/Department");
 const PatientProfile = require("../models/patientProfile");
+const { createAuditLog } = require("../utils/auditLogger");
 
 const getTodayRange = () => {
   const startOfToday = new Date();
@@ -20,7 +21,21 @@ const issueToken = async (req, res) => {
   try {
     const { patient, doctor, department, vitals } = req.body;
 
-    if (!patient || !doctor || !department) {
+    if (!patient || !doctor || !department?.trim()) {
+      await createAuditLog({
+        req,
+        action: "ISSUE_OPD_TOKEN",
+        module: "RECEPTION",
+        description:
+          "OPD token generation failed because patient, doctor, or department was missing",
+        status: "FAILURE",
+        metadata: {
+          patientId: patient || null,
+          doctorId: doctor || null,
+          department: department || "",
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Patient, doctor and department are required",
@@ -98,6 +113,21 @@ const issueToken = async (req, res) => {
     });
 
     if (existingActiveToken) {
+      await createAuditLog({
+        req,
+        action: "ISSUE_OPD_TOKEN",
+        module: "RECEPTION",
+        description: `OPD token generation rejected because active token ${existingActiveToken.displayToken} already exists`,
+        status: "FAILURE",
+        entityType: "AppointmentToken",
+        entityId: existingActiveToken._id,
+        metadata: {
+          patientId: patient,
+          doctorId: doctor,
+          department: selectedDepartment.name,
+        },
+      });
+
       return res.status(409).json({
         success: false,
         message:
@@ -143,12 +173,40 @@ const issueToken = async (req, res) => {
       .populate("doctor", "name email")
       .populate("departmentRef", "name code consultationFee");
 
+    await createAuditLog({
+      req,
+      action: "ISSUE_OPD_TOKEN",
+      module: "RECEPTION",
+      description: `OPD token ${token.displayToken} issued for ${selectedPatient.name}`,
+      status: "SUCCESS",
+      entityType: "AppointmentToken",
+      entityId: token._id,
+      metadata: {
+        displayToken: token.displayToken,
+        patientId: selectedPatient.patientId,
+        patientName: selectedPatient.name,
+        doctorName: assignedDoctor.name,
+        department: selectedDepartment.name,
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message: "OPD Token generated successfully",
       data: populatedToken,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "ISSUE_OPD_TOKEN",
+      module: "RECEPTION",
+      description: "OPD token generation failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -256,16 +314,44 @@ const getTokensQueue = async (req, res) => {
 
 const startTokenConsultation = async (req, res) => {
   try {
-    const token = await AppointmentToken.findById(req.params.id);
+    const token = await AppointmentToken.findById(req.params.id)
+      .populate("patient", "patientId name")
+      .populate("doctor", "name email")
+      .populate("departmentRef", "name code");
 
     if (!token) {
+      await createAuditLog({
+        req,
+        action: "START_CONSULTATION",
+        module: "PATIENT_VISITS",
+        description: `Consultation start failed because token ${req.params.id} was not found`,
+        status: "FAILURE",
+        metadata: {
+          tokenId: req.params.id,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Patient visit token was not found",
       });
     }
 
-    if (token.doctor.toString() !== req.user._id.toString()) {
+    if (token.doctor._id.toString() !== req.user._id.toString()) {
+      await createAuditLog({
+        req,
+        action: "START_CONSULTATION",
+        module: "PATIENT_VISITS",
+        description: `Unauthorized consultation start attempt for token ${token.displayToken}`,
+        status: "FAILURE",
+        entityType: "AppointmentToken",
+        entityId: token._id,
+        metadata: {
+          displayToken: token.displayToken,
+          assignedDoctorId: token.doctor._id,
+        },
+      });
+
       return res.status(403).json({
         success: false,
         message: "You are not authorized to start this consultation",
@@ -294,12 +380,40 @@ const startTokenConsultation = async (req, res) => {
         "appointmentNumber appointmentDate appointmentTime status",
       );
 
+    await createAuditLog({
+      req,
+      action: "START_CONSULTATION",
+      module: "PATIENT_VISITS",
+      description: `Consultation started for token ${token.displayToken} and patient ${token.patient.name}`,
+      status: "SUCCESS",
+      entityType: "AppointmentToken",
+      entityId: token._id,
+      metadata: {
+        displayToken: token.displayToken,
+        patientId: token.patient.patientId,
+        patientName: token.patient.name,
+        department: token.departmentRef?.name || token.department,
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: "Patient consultation started successfully",
       data: updatedToken,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "START_CONSULTATION",
+      module: "PATIENT_VISITS",
+      description: "Consultation start failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        tokenId: req.params.id,
+        error: error.message,
+      },
+    });
+
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to start consultation",

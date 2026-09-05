@@ -1,6 +1,7 @@
 const MedicalRecord = require("../models/MedicalRecord");
 const AppointmentToken = require("../models/appointmentToken");
 const Appointment = require("../models/Appointment");
+const { createAuditLog } = require("../utils/auditLogger");
 
 const createMedicalRecord = async (req, res) => {
   try {
@@ -15,6 +16,19 @@ const createMedicalRecord = async (req, res) => {
     } = req.body;
 
     if (!token || !patient || !chiefComplaints || !diagnosis) {
+      await createAuditLog({
+        req,
+        action: "CREATE_MEDICAL_RECORD",
+        module: "MEDICAL_RECORDS",
+        description:
+          "Medical record creation failed because required encounter details were missing",
+        status: "FAILURE",
+        metadata: {
+          tokenId: token || null,
+          patientId: patient || null,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Please provide all necessary encounter details",
@@ -35,9 +49,23 @@ const createMedicalRecord = async (req, res) => {
       });
     }
 
-    const activeToken = await AppointmentToken.findById(token);
+    const activeToken = await AppointmentToken.findById(token).populate(
+      "patient",
+      "patientId name",
+    );
 
     if (!activeToken) {
+      await createAuditLog({
+        req,
+        action: "CREATE_MEDICAL_RECORD",
+        module: "MEDICAL_RECORDS",
+        description: `Medical record creation failed because token ${token} was not found`,
+        status: "FAILURE",
+        metadata: {
+          tokenId: token,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Associated appointment token not found",
@@ -45,13 +73,42 @@ const createMedicalRecord = async (req, res) => {
     }
 
     if (activeToken.doctor.toString() !== req.user._id.toString()) {
+      await createAuditLog({
+        req,
+        action: "CREATE_MEDICAL_RECORD",
+        module: "MEDICAL_RECORDS",
+        description: `Unauthorized medical record creation attempted for token ${activeToken.displayToken}`,
+        status: "FAILURE",
+        entityType: "AppointmentToken",
+        entityId: activeToken._id,
+        metadata: {
+          displayToken: activeToken.displayToken,
+          assignedDoctorId: activeToken.doctor,
+        },
+      });
+
       return res.status(403).json({
         success: false,
         message: "You are not authorized to consult this patient",
       });
     }
 
-    if (activeToken.patient.toString() !== patient.toString()) {
+    if (activeToken.patient._id.toString() !== patient.toString()) {
+      await createAuditLog({
+        req,
+        action: "CREATE_MEDICAL_RECORD",
+        module: "MEDICAL_RECORDS",
+        description: `Medical record creation rejected because submitted patient does not match token ${activeToken.displayToken}`,
+        status: "FAILURE",
+        entityType: "AppointmentToken",
+        entityId: activeToken._id,
+        metadata: {
+          displayToken: activeToken.displayToken,
+          submittedPatientId: patient,
+          tokenPatientId: activeToken.patient._id,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Selected patient does not match the appointment token",
@@ -69,6 +126,20 @@ const createMedicalRecord = async (req, res) => {
     const existingRecord = await MedicalRecord.findOne({ token });
 
     if (existingRecord) {
+      await createAuditLog({
+        req,
+        action: "CREATE_MEDICAL_RECORD",
+        module: "MEDICAL_RECORDS",
+        description: `Medical record creation rejected because token ${activeToken.displayToken} already has an encounter record`,
+        status: "FAILURE",
+        entityType: "MedicalRecord",
+        entityId: existingRecord._id,
+        metadata: {
+          tokenId: activeToken._id,
+          displayToken: activeToken.displayToken,
+        },
+      });
+
       return res.status(409).json({
         success: false,
         message: "A medical record already exists for this patient visit token",
@@ -78,7 +149,7 @@ const createMedicalRecord = async (req, res) => {
     const record = await MedicalRecord.create({
       token,
       appointment: activeToken.appointment || null,
-      patient: activeToken.patient,
+      patient: activeToken.patient._id,
       doctor: req.user._id,
       chiefComplaints: chiefComplaints.trim(),
       diagnosis: diagnosis.trim(),
@@ -103,6 +174,20 @@ const createMedicalRecord = async (req, res) => {
       );
 
       if (!updatedAppointment) {
+        await createAuditLog({
+          req,
+          action: "CREATE_MEDICAL_RECORD",
+          module: "MEDICAL_RECORDS",
+          description: `Medical record ${record._id} was created but linked appointment was not found`,
+          status: "FAILURE",
+          entityType: "MedicalRecord",
+          entityId: record._id,
+          metadata: {
+            appointmentId: activeToken.appointment,
+            tokenId: activeToken._id,
+          },
+        });
+
         return res.status(404).json({
           success: false,
           message:
@@ -123,6 +208,24 @@ const createMedicalRecord = async (req, res) => {
         "appointmentNumber appointmentDate appointmentTime status",
       );
 
+    await createAuditLog({
+      req,
+      action: "CREATE_MEDICAL_RECORD",
+      module: "MEDICAL_RECORDS",
+      description: `Medical record completed for token ${activeToken.displayToken} and patient ${activeToken.patient.name}`,
+      status: "SUCCESS",
+      entityType: "MedicalRecord",
+      entityId: record._id,
+      metadata: {
+        displayToken: activeToken.displayToken,
+        patientId: activeToken.patient.patientId,
+        patientName: activeToken.patient.name,
+        medicineCount: medicines.length,
+        advisedLabTestsCount: advisedLabTests.length,
+        linkedAppointmentId: activeToken.appointment || null,
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message:
@@ -130,6 +233,17 @@ const createMedicalRecord = async (req, res) => {
       data: populatedRecord,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "CREATE_MEDICAL_RECORD",
+      module: "MEDICAL_RECORDS",
+      description: "Medical record creation failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,

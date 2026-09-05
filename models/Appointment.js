@@ -47,13 +47,7 @@ const appointmentSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: [
-        "Scheduled",
-        "Checked-In",
-        "Completed",
-        "Cancelled",
-        "No-Show",
-      ],
+      enum: ["Scheduled", "Checked-In", "Completed", "Cancelled", "No-Show"],
       default: "Scheduled",
     },
 
@@ -121,4 +115,6 @@ appointmentSchema.index({
   appointmentDate: 1,
 });
 
-module.exports = mongoose.model("Appointment", appointmentSchema);
+module.exports =
+  mongoose.models.Appointment ||
+  mongoose.model("Appointment", appointmentSchema);

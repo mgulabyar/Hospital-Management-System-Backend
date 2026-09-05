@@ -1,8 +1,9 @@
 const mongoose = require("mongoose");
 const MedicineInventory = require("../models/medicineInventory");
-const PharmacySale = require("../models/pharmacySale");
+const PharmacySale = require("../models/PharmacySale");
 const MedicalRecord = require("../models/MedicalRecord");
 const PatientProfile = require("../models/patientProfile");
+const { createAuditLog } = require("../utils/auditLogger");
 
 const getNextSaleNumber = async () => {
   const year = new Date().getFullYear();
@@ -38,6 +39,29 @@ const isExpired = (expiryDate) => {
 
 const normalizeName = (value) => value?.trim().toUpperCase();
 
+const getDispenseErrorStatusCode = (message) => {
+  if (
+    message.includes("already been dispensed") ||
+    message.includes("Duplicate medicine")
+  ) {
+    return 409;
+  }
+
+  if (
+    message.includes("not found") ||
+    message.includes("inactive") ||
+    message.includes("expired") ||
+    message.includes("Insufficient stock") ||
+    message.includes("valid inventory medicine ID") ||
+    message.includes("whole number greater than zero") ||
+    message.includes("does not match")
+  ) {
+    return 400;
+  }
+
+  return 500;
+};
+
 const addMedicineStock = async (req, res) => {
   try {
     const {
@@ -57,6 +81,19 @@ const addMedicineStock = async (req, res) => {
       pricePerUnit === undefined ||
       !expiryDate
     ) {
+      await createAuditLog({
+        req,
+        action: "ADD_MEDICINE_STOCK",
+        module: "PHARMACY",
+        description:
+          "Medicine stock update failed because required inventory details were missing",
+        status: "FAILURE",
+        metadata: {
+          name: name || "",
+          category: category || "",
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message:
@@ -77,6 +114,21 @@ const addMedicineStock = async (req, res) => {
       !Number.isFinite(reorderQuantity) ||
       reorderQuantity < 0
     ) {
+      await createAuditLog({
+        req,
+        action: "ADD_MEDICINE_STOCK",
+        module: "PHARMACY",
+        description:
+          "Medicine stock update failed because quantity, price, or reorder level was invalid",
+        status: "FAILURE",
+        metadata: {
+          name,
+          availableStock,
+          pricePerUnit,
+          reorderLevel,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message:
@@ -87,6 +139,18 @@ const addMedicineStock = async (req, res) => {
     const normalizedExpiryDate = new Date(expiryDate);
 
     if (Number.isNaN(normalizedExpiryDate.getTime())) {
+      await createAuditLog({
+        req,
+        action: "ADD_MEDICINE_STOCK",
+        module: "PHARMACY",
+        description: `Medicine stock update failed because expiry date was invalid for ${name}`,
+        status: "FAILURE",
+        metadata: {
+          name,
+          expiryDate,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Please provide a valid medicine expiry date",
@@ -94,6 +158,18 @@ const addMedicineStock = async (req, res) => {
     }
 
     if (isExpired(normalizedExpiryDate)) {
+      await createAuditLog({
+        req,
+        action: "ADD_MEDICINE_STOCK",
+        module: "PHARMACY",
+        description: `Medicine stock update rejected because ${name} has an expired batch date`,
+        status: "FAILURE",
+        metadata: {
+          name,
+          expiryDate,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Expired medicine stock cannot be added",
@@ -105,6 +181,9 @@ const addMedicineStock = async (req, res) => {
     let medicine = await MedicineInventory.findOne({
       name: normalizedMedicineName,
     });
+
+    const isReplenishment = Boolean(medicine);
+    const previousStock = medicine?.availableStock || 0;
 
     if (medicine) {
       medicine.availableStock += stockToAdd;
@@ -128,12 +207,49 @@ const addMedicineStock = async (req, res) => {
       });
     }
 
+    await createAuditLog({
+      req,
+      action: isReplenishment
+        ? "REPLENISH_MEDICINE_STOCK"
+        : "ADD_MEDICINE_STOCK",
+      module: "PHARMACY",
+      description: `${medicine.name} inventory ${
+        isReplenishment ? "replenished" : "created"
+      } successfully`,
+      status: "SUCCESS",
+      entityType: "MedicineInventory",
+      entityId: medicine._id,
+      metadata: {
+        medicineName: medicine.name,
+        category: medicine.category,
+        batchNumber: medicine.batchNumber,
+        previousStock,
+        stockAdded: stockToAdd,
+        currentStock: medicine.availableStock,
+        unitPrice: medicine.pricePerUnit,
+        reorderLevel: medicine.reorderLevel,
+        expiryDate: medicine.expiryDate,
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message: "Medicine inventory stock saved successfully",
       data: medicine,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "ADD_MEDICINE_STOCK",
+      module: "PHARMACY",
+      description: "Medicine stock update failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        name: req.body?.name || "",
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -206,11 +322,33 @@ const updateMedicineInventory = async (req, res) => {
     const medicine = await MedicineInventory.findById(req.params.id);
 
     if (!medicine) {
+      await createAuditLog({
+        req,
+        action: "UPDATE_MEDICINE_INVENTORY",
+        module: "PHARMACY",
+        description: `Medicine inventory update failed because item ${req.params.id} was not found`,
+        status: "FAILURE",
+        metadata: {
+          medicineId: req.params.id,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Medicine inventory item was not found",
       });
     }
+
+    const previousData = {
+      name: medicine.name,
+      category: medicine.category,
+      pricePerUnit: medicine.pricePerUnit,
+      expiryDate: medicine.expiryDate,
+      reorderLevel: medicine.reorderLevel,
+      batchNumber: medicine.batchNumber,
+      availableStock: medicine.availableStock,
+      isActive: medicine.isActive,
+    };
 
     if (name !== undefined && !name.trim()) {
       return res.status(400).json({
@@ -288,12 +426,47 @@ const updateMedicineInventory = async (req, res) => {
 
     await medicine.save();
 
+    await createAuditLog({
+      req,
+      action: "UPDATE_MEDICINE_INVENTORY",
+      module: "PHARMACY",
+      description: `Medicine inventory ${medicine.name} updated successfully`,
+      status: "SUCCESS",
+      entityType: "MedicineInventory",
+      entityId: medicine._id,
+      metadata: {
+        previousData,
+        updatedData: {
+          name: medicine.name,
+          category: medicine.category,
+          pricePerUnit: medicine.pricePerUnit,
+          expiryDate: medicine.expiryDate,
+          reorderLevel: medicine.reorderLevel,
+          batchNumber: medicine.batchNumber,
+          availableStock: medicine.availableStock,
+          isActive: medicine.isActive,
+        },
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: "Medicine inventory item updated successfully",
       data: medicine,
     });
   } catch (error) {
+    await createAuditLog({
+      req,
+      action: "UPDATE_MEDICINE_INVENTORY",
+      module: "PHARMACY",
+      description: "Medicine inventory update failed due to a server error",
+      status: "FAILURE",
+      metadata: {
+        medicineId: req.params.id,
+        error: error.message,
+      },
+    });
+
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -358,6 +531,19 @@ const dispenseMedicines = async (req, res) => {
     const { patientId, medicalRecordId, items } = req.body;
 
     if (!patientId || !Array.isArray(items) || items.length === 0) {
+      await createAuditLog({
+        req,
+        action: "DISPENSE_MEDICINES",
+        module: "PHARMACY",
+        description:
+          "Medicine dispensing failed because patient or sale items were missing",
+        status: "FAILURE",
+        metadata: {
+          patientId: patientId || null,
+          medicalRecordId: medicalRecordId || null,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message:
@@ -368,6 +554,18 @@ const dispenseMedicines = async (req, res) => {
     const patient = await PatientProfile.findById(patientId);
 
     if (!patient) {
+      await createAuditLog({
+        req,
+        action: "DISPENSE_MEDICINES",
+        module: "PHARMACY",
+        description: `Medicine dispensing failed because patient ${patientId} was not found`,
+        status: "FAILURE",
+        metadata: {
+          patientId,
+          medicalRecordId: medicalRecordId || null,
+        },
+      });
+
       return res.status(404).json({
         success: false,
         message: "Selected patient profile was not found",
@@ -383,6 +581,18 @@ const dispenseMedicines = async (req, res) => {
       ]);
 
       if (!medicalRecord) {
+        await createAuditLog({
+          req,
+          action: "DISPENSE_MEDICINES",
+          module: "PHARMACY",
+          description: `Medicine dispensing failed because prescription ${medicalRecordId} was not found`,
+          status: "FAILURE",
+          metadata: {
+            patientId,
+            medicalRecordId,
+          },
+        });
+
         return res.status(404).json({
           success: false,
           message: "Selected medical record prescription was not found",
@@ -390,6 +600,21 @@ const dispenseMedicines = async (req, res) => {
       }
 
       if (medicalRecord.patient.toString() !== patientId.toString()) {
+        await createAuditLog({
+          req,
+          action: "DISPENSE_MEDICINES",
+          module: "PHARMACY",
+          description:
+            "Medicine dispensing rejected because patient does not match prescription",
+          status: "FAILURE",
+          entityType: "MedicalRecord",
+          entityId: medicalRecord._id,
+          metadata: {
+            patientId,
+            prescriptionPatientId: medicalRecord.patient,
+          },
+        });
+
         return res.status(400).json({
           success: false,
           message:
@@ -398,6 +623,21 @@ const dispenseMedicines = async (req, res) => {
       }
 
       if (existingSale) {
+        await createAuditLog({
+          req,
+          action: "DISPENSE_MEDICINES",
+          module: "PHARMACY",
+          description: `Medicine dispensing rejected because prescription ${medicalRecordId} was already dispensed`,
+          status: "FAILURE",
+          entityType: "PharmacySale",
+          entityId: existingSale._id,
+          metadata: {
+            patientId,
+            medicalRecordId,
+            saleNumber: existingSale.saleNumber,
+          },
+        });
+
         return res.status(409).json({
           success: false,
           message:
@@ -410,9 +650,23 @@ const dispenseMedicines = async (req, res) => {
 
     if (
       medicineIdList.some(
-        (medicineId) => !medicineId || !mongoose.Types.ObjectId.isValid(medicineId),
+        (medicineId) =>
+          !medicineId || !mongoose.Types.ObjectId.isValid(medicineId),
       )
     ) {
+      await createAuditLog({
+        req,
+        action: "DISPENSE_MEDICINES",
+        module: "PHARMACY",
+        description:
+          "Medicine dispensing failed because one or more inventory medicine IDs were invalid",
+        status: "FAILURE",
+        metadata: {
+          patientId,
+          medicalRecordId: medicalRecordId || null,
+        },
+      });
+
       return res.status(400).json({
         success: false,
         message: "Every sale item must contain a valid inventory medicine ID",
@@ -423,6 +677,20 @@ const dispenseMedicines = async (req, res) => {
 
     for (const medicineId of medicineIdList) {
       if (repeatedMedicineIds.has(medicineId.toString())) {
+        await createAuditLog({
+          req,
+          action: "DISPENSE_MEDICINES",
+          module: "PHARMACY",
+          description:
+            "Medicine dispensing failed because duplicate medicines were submitted in the same receipt",
+          status: "FAILURE",
+          metadata: {
+            patientId,
+            medicalRecordId: medicalRecordId || null,
+            medicineId,
+          },
+        });
+
         return res.status(400).json({
           success: false,
           message:
@@ -438,6 +706,20 @@ const dispenseMedicines = async (req, res) => {
         !Number.isInteger(Number(item.quantity)) ||
         Number(item.quantity) <= 0
       ) {
+        await createAuditLog({
+          req,
+          action: "DISPENSE_MEDICINES",
+          module: "PHARMACY",
+          description:
+            "Medicine dispensing failed because one or more quantities were invalid",
+          status: "FAILURE",
+          metadata: {
+            patientId,
+            medicalRecordId: medicalRecordId || null,
+            quantity: item.quantity,
+          },
+        });
+
         return res.status(400).json({
           success: false,
           message:
@@ -534,6 +816,28 @@ const dispenseMedicines = async (req, res) => {
       .populate("itemsSold.medicine", "name category batchNumber")
       .populate("pharmacist", "name email");
 
+    await createAuditLog({
+      req,
+      action: "DISPENSE_MEDICINES",
+      module: "PHARMACY",
+      description: `Pharmacy receipt ${finalReceipt.saleNumber} generated for ${patient.name}`,
+      status: "SUCCESS",
+      entityType: "PharmacySale",
+      entityId: finalReceipt._id,
+      metadata: {
+        saleNumber: finalReceipt.saleNumber,
+        patientId: patient.patientId,
+        patientName: patient.name,
+        medicalRecordId: medicalRecordId || null,
+        totalAmount: finalReceipt.totalAmount,
+        items: finalReceipt.itemsSold.map((item) => ({
+          medicineName: item.medicineName,
+          quantity: item.quantity,
+          subtotal: item.subtotal,
+        })),
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message: "Pharmacy prescription dispensed successfully",
@@ -543,18 +847,20 @@ const dispenseMedicines = async (req, res) => {
     const message =
       error.message || "Failed to complete medicine dispensing transaction";
 
-    const statusCode =
-      message.includes("already been dispensed") ||
-      message.includes("Duplicate medicine")
-        ? 409
-        : message.includes("not found") ||
-            message.includes("inactive") ||
-            message.includes("expired") ||
-            message.includes("Insufficient stock")
-          ? 400
-          : 500;
+    await createAuditLog({
+      req,
+      action: "DISPENSE_MEDICINES",
+      module: "PHARMACY",
+      description: `Medicine dispensing failed: ${message}`,
+      status: "FAILURE",
+      metadata: {
+        patientId: req.body?.patientId || null,
+        medicalRecordId: req.body?.medicalRecordId || null,
+        error: message,
+      },
+    });
 
-    return res.status(statusCode).json({
+    return res.status(getDispenseErrorStatusCode(message)).json({
       success: false,
       message,
     });
