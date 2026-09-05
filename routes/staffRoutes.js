@@ -1,4 +1,5 @@
 const express = require("express");
+
 const router = express.Router();
 
 const {
@@ -9,18 +10,18 @@ const {
   toggleStaffStatus,
 } = require("../controllers/staffController");
 
-const {
-  protect,
-  authorizeRoles,
-} = require("../middlewares/authMiddleware");
+const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
 router.use(protect);
-router.use(authorizeRoles("super_admin"));
 
-router.route("/").post(createStaff).get(getAllStaff);
+router.get("/", authorizeRoles("super_admin", "receptionist"), getAllStaff);
 
-router.route("/:id").put(updateUserAccount).delete(deleteUserAccount);
+router.post("/", authorizeRoles("super_admin"), createStaff);
 
-router.put("/:id/status", toggleStaffStatus);
+router.put("/:id", authorizeRoles("super_admin"), updateUserAccount);
+
+router.delete("/:id", authorizeRoles("super_admin"), deleteUserAccount);
+
+router.put("/:id/status", authorizeRoles("super_admin"), toggleStaffStatus);
 
 module.exports = router;

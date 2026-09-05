@@ -7,7 +7,7 @@ const {
 const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
 router.use(protect);
-router.use(authorizeRoles("super_admin", "receptionist"));
+router.use(authorizeRoles("super_admin", "receptionist", "doctor"));
 
 router.route("/").post(registerPatient).get(getPatients);
 
