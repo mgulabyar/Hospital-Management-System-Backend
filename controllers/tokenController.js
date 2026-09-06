@@ -163,6 +163,7 @@ const issueToken = async (req, res) => {
         temperature: Number(vitals?.temperature) || 0,
       },
       status: "Pending",
+      visitDate: new Date(),
     });
 
     const populatedToken = await AppointmentToken.findById(token._id)
@@ -257,27 +258,15 @@ const getTokensQueue = async (req, res) => {
       filter.departmentRef = departmentRef;
     }
 
-    if (date) {
-      const selectedDate = new Date(date);
-
-      if (Number.isNaN(selectedDate.getTime())) {
-        return res.status(400).json({
-          success: false,
-          message: "Please provide a valid queue date",
-        });
-      }
-
-      const startOfDay = new Date(selectedDate);
-      startOfDay.setHours(0, 0, 0, 0);
-
-      const endOfDay = new Date(selectedDate);
-      endOfDay.setHours(23, 59, 59, 999);
-
-      filter.visitDate = {
-        $gte: startOfDay,
-        $lte: endOfDay,
-      };
-    }
+    // Remove date filter for now
+    // if (date) {
+    //   const selectedDate = new Date(date);
+    //   const startOfDay = new Date(selectedDate);
+    //   startOfDay.setHours(0, 0, 0, 0);
+    //   const endOfDay = new Date(selectedDate);
+    //   endOfDay.setHours(23, 59, 59, 999);
+    //   filter.visitDate = { $gte: startOfDay, $lte: endOfDay };
+    // }
 
     const queue = await AppointmentToken.find(filter)
       .populate(
@@ -297,7 +286,7 @@ const getTokensQueue = async (req, res) => {
         "appointment",
         "appointmentNumber appointmentDate appointmentTime status",
       )
-      .sort({ visitDate: 1, tokenNumber: 1 });
+      .sort({ tokenNumber: -1 });
 
     return res.status(200).json({
       success: true,
