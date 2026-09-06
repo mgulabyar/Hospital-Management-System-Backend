@@ -525,8 +525,6 @@ const getPendingPrescriptions = async (req, res) => {
 };
 
 const dispenseMedicines = async (req, res) => {
-  const session = await mongoose.startSession();
-
   try {
     const { patientId, medicalRecordId, items } = req.body;
 
@@ -728,86 +726,75 @@ const dispenseMedicines = async (req, res) => {
       }
     }
 
-    let finalReceipt;
+    const inventoryItems = await MedicineInventory.find({
+      _id: {
+        $in: medicineIdList,
+      },
+    });
 
-    await session.withTransaction(async () => {
-      const inventoryItems = await MedicineInventory.find({
-        _id: {
-          $in: medicineIdList,
-        },
-      }).session(session);
+    if (inventoryItems.length !== medicineIdList.length) {
+      throw new Error("One or more selected medicines were not found");
+    }
 
-      if (inventoryItems.length !== medicineIdList.length) {
-        throw new Error("One or more selected medicines were not found");
-      }
+    const inventoryById = new Map(
+      inventoryItems.map((medicine) => [medicine._id.toString(), medicine]),
+    );
 
-      const inventoryById = new Map(
-        inventoryItems.map((medicine) => [medicine._id.toString(), medicine]),
+    let totalCalculatedAmount = 0;
+    const itemsSoldArray = [];
+
+    for (const item of items) {
+      const currentStockItem = inventoryById.get(
+        item.medicineId.toString(),
       );
 
-      let totalCalculatedAmount = 0;
-      const itemsSoldArray = [];
+      const requestedQuantity = Number(item.quantity);
 
-      for (const item of items) {
-        const currentStockItem = inventoryById.get(
-          item.medicineId.toString(),
+      if (!currentStockItem.isActive) {
+        throw new Error(
+          `${currentStockItem.name} is inactive and cannot be dispensed`,
         );
-
-        const requestedQuantity = Number(item.quantity);
-
-        if (!currentStockItem.isActive) {
-          throw new Error(
-            `${currentStockItem.name} is inactive and cannot be dispensed`,
-          );
-        }
-
-        if (isExpired(currentStockItem.expiryDate)) {
-          throw new Error(
-            `${currentStockItem.name} is expired and cannot be dispensed`,
-          );
-        }
-
-        if (currentStockItem.availableStock < requestedQuantity) {
-          throw new Error(
-            `Insufficient stock level for item: ${currentStockItem.name}`,
-          );
-        }
-
-        const itemSubtotal =
-          currentStockItem.pricePerUnit * requestedQuantity;
-
-        totalCalculatedAmount += itemSubtotal;
-
-        currentStockItem.availableStock -= requestedQuantity;
-        await currentStockItem.save({ session });
-
-        itemsSoldArray.push({
-          medicine: currentStockItem._id,
-          medicineName: currentStockItem.name,
-          quantity: requestedQuantity,
-          price: currentStockItem.pricePerUnit,
-          subtotal: itemSubtotal,
-        });
       }
 
-      const saleNumber = await getNextSaleNumber();
+      if (isExpired(currentStockItem.expiryDate)) {
+        throw new Error(
+          `${currentStockItem.name} is expired and cannot be dispensed`,
+        );
+      }
 
-      const receipts = await PharmacySale.create(
-        [
-          {
-            saleNumber,
-            patient: patientId,
-            medicalRecord: medicalRecordId || null,
-            itemsSold: itemsSoldArray,
-            totalAmount: totalCalculatedAmount,
-            paymentStatus: "Paid",
-            pharmacist: req.user._id,
-          },
-        ],
-        { session },
-      );
+      if (currentStockItem.availableStock < requestedQuantity) {
+        throw new Error(
+          `Insufficient stock level for item: ${currentStockItem.name}`,
+        );
+      }
 
-      finalReceipt = receipts[0];
+      const itemSubtotal =
+        currentStockItem.pricePerUnit * requestedQuantity;
+
+      totalCalculatedAmount += itemSubtotal;
+
+      currentStockItem.availableStock -= requestedQuantity;
+      await currentStockItem.save();
+
+      itemsSoldArray.push({
+        medicine: currentStockItem._id,
+        medicineName: currentStockItem.name,
+        quantity: requestedQuantity,
+        price: currentStockItem.pricePerUnit,
+        subtotal: itemSubtotal,
+      });
+    }
+
+    const saleNumber = await getNextSaleNumber();
+
+    const finalReceipt = await PharmacySale.create({
+      saleNumber,
+      patient: patientId,
+      medicalRecord: medicalRecordId || null,
+      itemsSold: itemsSoldArray,
+      totalAmount: totalCalculatedAmount,
+      paymentStatus: "Paid",
+      pharmacist: req.user._id,
     });
 
     const populatedReceipt = await PharmacySale.findById(finalReceipt._id)
@@ -864,8 +851,6 @@ const dispenseMedicines = async (req, res) => {
       success: false,
       message,
     });
-  } finally {
-    await session.endSession();
   }
 };
 

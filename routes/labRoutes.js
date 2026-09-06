@@ -1,68 +1,30 @@
-const mongoose = require("mongoose");
+const express = require("express");
+const router = express.Router();
+const {
+  initializeLabRequests,
+  submitLabResult,
+  getLabReports,
+} = require("../controllers/labController");
+const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
-const labReportSchema = new mongoose.Schema(
-  {
-    medicalRecord: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "MedicalRecord",
-      required: true,
-    },
+router.use(protect);
 
-    patient: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "PatientProfile",
-      required: true,
-    },
-
-    testName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    testFee: {
-      type: Number,
-      required: true,
-      default: 500,
-      min: 0,
-    },
-
-    testResultValues: {
-      type: String,
-      default: "Pending Analysis",
-      trim: true,
-    },
-
-    status: {
-      type: String,
-      enum: ["Pending", "Completed"],
-      default: "Pending",
-    },
-
-    labTechnician: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
-
-    billedInInvoice: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Invoice",
-      default: null,
-    },
-  },
-  { timestamps: true },
+router.get(
+  "/reports",
+  authorizeRoles("super_admin", "laboratorian", "doctor"),
+  getLabReports,
 );
 
-labReportSchema.index({
-  medicalRecord: 1,
-  testName: 1,
-});
+router.post(
+  "/initialize",
+  authorizeRoles("super_admin", "doctor"),
+  initializeLabRequests,
+);
 
-labReportSchema.index({
-  patient: 1,
-  createdAt: -1,
-});
+router.put(
+  "/report/:id",
+  authorizeRoles("super_admin", "laboratorian"),
+  submitLabResult,
+);
 
-module.exports =
-  mongoose.models.LabReport || mongoose.model("LabReport", labReportSchema);
+module.exports = router;
