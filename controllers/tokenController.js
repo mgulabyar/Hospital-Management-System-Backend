@@ -258,16 +258,6 @@ const getTokensQueue = async (req, res) => {
       filter.departmentRef = departmentRef;
     }
 
-    // Remove date filter for now
-    // if (date) {
-    //   const selectedDate = new Date(date);
-    //   const startOfDay = new Date(selectedDate);
-    //   startOfDay.setHours(0, 0, 0, 0);
-    //   const endOfDay = new Date(selectedDate);
-    //   endOfDay.setHours(23, 59, 59, 999);
-    //   filter.visitDate = { $gte: startOfDay, $lte: endOfDay };
-    // }
-
     const queue = await AppointmentToken.find(filter)
       .populate(
         "patient",

@@ -8,10 +8,7 @@ const {
   toggleDepartmentStatus,
 } = require("../controllers/departmentController");
 
-const {
-  protect,
-  authorizeRoles,
-} = require("../middlewares/authMiddleware");
+const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
 router.use(protect);
 
@@ -28,17 +25,9 @@ router.get(
   getDepartments,
 );
 
-router.post(
-  "/",
-  authorizeRoles("super_admin"),
-  createDepartment,
-);
+router.post("/", authorizeRoles("super_admin"), createDepartment);
 
-router.put(
-  "/:id",
-  authorizeRoles("super_admin"),
-  updateDepartment,
-);
+router.put("/:id", authorizeRoles("super_admin"), updateDepartment);
 
 router.patch(
   "/:id/toggle-status",

@@ -12,10 +12,7 @@ const {
   updateAppointmentStatus,
 } = require("../controllers/appointmentController");
 
-const {
-  protect,
-  authorizeRoles,
-} = require("../middlewares/authMiddleware");
+const { protect, authorizeRoles } = require("../middlewares/authMiddleware");
 
 router.use(protect);
 

@@ -748,8 +748,430 @@ const getInvoices = async (req, res) => {
   }
 };
 
+// const getHospitalDashboardData = async (req, res) => {
+//   try {
+//     const allowedRoles = ["super_admin", "accountant"];
+
+//     if (!allowedRoles.includes(req.user?.role)) {
+//       return res.status(403).json({
+//         success: false,
+//         message:
+//           "Only super admins and accountants can access dashboard analytics",
+//       });
+//     }
+
+//     const { date } = req.query;
+
+//     const selectedDate = date ? new Date(date) : new Date();
+
+//     if (Number.isNaN(selectedDate.getTime())) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Please provide a valid dashboard date",
+//       });
+//     }
+
+//     const startOfDay = new Date(selectedDate);
+//     startOfDay.setHours(0, 0, 0, 0);
+
+//     const endOfDay = new Date(selectedDate);
+//     endOfDay.setHours(23, 59, 59, 999);
+
+//     const [
+//       totalPatients,
+//       totalStaff,
+//       activeStaff,
+//       completedConsultations,
+//       pendingVisits,
+//       inConsultationVisits,
+//       completedVisitsToday,
+//       scheduledAppointments,
+//       checkedInAppointments,
+//       completedAppointments,
+//       cancelledAppointments,
+//       noShowAppointments,
+//       pendingLabTests,
+//       lowStockMedicines,
+//       paidInvoiceSummary,
+//       outstandingInvoiceSummary,
+//       pharmacySalesSummary,
+//       departmentVisitSummary,
+//       doctorWorkloadSummary,
+//       revenueBreakdownSummary,
+//     ] = await Promise.all([
+//       PatientProfile.countDocuments({}),
+
+//       User.countDocuments({
+//         role: {
+//           $ne: "super_admin",
+//         },
+//       }),
+
+//       User.countDocuments({
+//         role: {
+//           $ne: "super_admin",
+//         },
+//         isActive: true,
+//       }),
+
+//       AppointmentToken.countDocuments({
+//         status: "Completed",
+//       }),
+
+//       AppointmentToken.countDocuments({
+//         status: "Pending",
+//         visitDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       AppointmentToken.countDocuments({
+//         status: "In-Consultation",
+//         visitDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       AppointmentToken.countDocuments({
+//         status: "Completed",
+//         visitDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       Appointment.countDocuments({
+//         status: "Scheduled",
+//         appointmentDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       Appointment.countDocuments({
+//         status: "Checked-In",
+//         appointmentDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       Appointment.countDocuments({
+//         status: "Completed",
+//         appointmentDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       Appointment.countDocuments({
+//         status: "Cancelled",
+//         appointmentDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       Appointment.countDocuments({
+//         status: "No-Show",
+//         appointmentDate: {
+//           $gte: startOfDay,
+//           $lte: endOfDay,
+//         },
+//       }),
+
+//       LabReport.countDocuments({
+//         status: "Pending",
+//       }),
+
+//       MedicineInventory.countDocuments({
+//         isActive: true,
+//         $expr: {
+//           $lte: ["$availableStock", "$reorderLevel"],
+//         },
+//       }),
+
+//       Invoice.aggregate([
+//         {
+//           $match: {
+//             paymentStatus: {
+//               $in: ["Paid", "Partial"],
+//             },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: null,
+//             total: {
+//               $sum: "$amountPaid",
+//             },
+//           },
+//         },
+//       ]),
+
+//       Invoice.aggregate([
+//         {
+//           $match: {
+//             paymentStatus: {
+//               $in: ["Unpaid", "Partial"],
+//             },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: null,
+//             total: {
+//               $sum: "$remainingBalance",
+//             },
+//           },
+//         },
+//       ]),
+
+//       PharmacySale.aggregate([
+//         {
+//           $group: {
+//             _id: null,
+//             total: {
+//               $sum: "$totalAmount",
+//             },
+//           },
+//         },
+//       ]),
+
+//       AppointmentToken.aggregate([
+//         {
+//           $match: {
+//             visitDate: {
+//               $gte: startOfDay,
+//               $lte: endOfDay,
+//             },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: "$departmentRef",
+//             visits: {
+//               $sum: 1,
+//             },
+//             completedVisits: {
+//               $sum: {
+//                 $cond: [
+//                   {
+//                     $eq: ["$status", "Completed"],
+//                   },
+//                   1,
+//                   0,
+//                 ],
+//               },
+//             },
+//           },
+//         },
+//         {
+//           $lookup: {
+//             from: "departments",
+//             localField: "_id",
+//             foreignField: "_id",
+//             as: "departmentInfo",
+//           },
+//         },
+//         {
+//           $unwind: {
+//             path: "$departmentInfo",
+//             preserveNullAndEmptyArrays: true,
+//           },
+//         },
+//         {
+//           $project: {
+//             _id: 0,
+//             departmentId: "$_id",
+//             departmentName: {
+//               $ifNull: ["$departmentInfo.name", "Unknown Department"],
+//             },
+//             departmentCode: {
+//               $ifNull: ["$departmentInfo.code", "OPD"],
+//             },
+//             visits: 1,
+//             completedVisits: 1,
+//           },
+//         },
+//         {
+//           $sort: {
+//             visits: -1,
+//           },
+//         },
+//       ]),
+
+//       AppointmentToken.aggregate([
+//         {
+//           $match: {
+//             visitDate: {
+//               $gte: startOfDay,
+//               $lte: endOfDay,
+//             },
+//           },
+//         },
+//         {
+//           $group: {
+//             _id: "$doctor",
+//             visits: {
+//               $sum: 1,
+//             },
+//             completedVisits: {
+//               $sum: {
+//                 $cond: [
+//                   {
+//                     $eq: ["$status", "Completed"],
+//                   },
+//                   1,
+//                   0,
+//                 ],
+//               },
+//             },
+//           },
+//         },
+//         {
+//           $lookup: {
+//             from: "users",
+//             localField: "_id",
+//             foreignField: "_id",
+//             as: "doctorInfo",
+//           },
+//         },
+//         {
+//           $unwind: {
+//             path: "$doctorInfo",
+//             preserveNullAndEmptyArrays: true,
+//           },
+//         },
+//         {
+//           $project: {
+//             _id: 0,
+//             doctorId: "$_id",
+//             doctorName: {
+//               $ifNull: ["$doctorInfo.name", "Unknown Doctor"],
+//             },
+//             visits: 1,
+//             completedVisits: 1,
+//           },
+//         },
+//         {
+//           $sort: {
+//             visits: -1,
+//           },
+//         },
+//       ]),
+
+//       Invoice.aggregate([
+//         {
+//           $group: {
+//             _id: null,
+//             consultationRevenue: {
+//               $sum: "$consultationFee",
+//             },
+//             labRevenue: {
+//               $sum: "$labFee",
+//             },
+//             pharmacyRevenue: {
+//               $sum: "$pharmacyFee",
+//             },
+//             invoiceGrossTotal: {
+//               $sum: "$grossTotal",
+//             },
+//             collectedRevenue: {
+//               $sum: "$amountPaid",
+//             },
+//           },
+//         },
+//       ]),
+//     ]);
+
+//     const paidRevenue =
+//       paidInvoiceSummary.length > 0 ? paidInvoiceSummary[0].total : 0;
+
+//     const outstandingBalance =
+//       outstandingInvoiceSummary.length > 0
+//         ? outstandingInvoiceSummary[0].total
+//         : 0;
+
+//     const pharmacySalesTotal =
+//       pharmacySalesSummary.length > 0 ? pharmacySalesSummary[0].total : 0;
+
+//     const revenueBreakdown =
+//       revenueBreakdownSummary.length > 0
+//         ? revenueBreakdownSummary[0]
+//         : {
+//             consultationRevenue: 0,
+//             labRevenue: 0,
+//             pharmacyRevenue: 0,
+//             invoiceGrossTotal: 0,
+//             collectedRevenue: 0,
+//           };
+
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         selectedDate: startOfDay,
+
+//         totalPatientsRegistered: totalPatients,
+//         totalHospitalStaffAccounts: totalStaff,
+//         activeHospitalStaffAccounts: activeStaff,
+//         completedConsultationsCount: completedConsultations,
+
+//         netFinancialRevenueCollected: paidRevenue,
+//         outstandingBalance,
+//         pharmacySalesTotal,
+
+//         dailyOperations: {
+//           pendingVisits,
+//           inConsultationVisits,
+//           completedVisits: completedVisitsToday,
+//           pendingLabTests,
+//           lowStockMedicines,
+//         },
+
+//         appointmentStatusCounts: {
+//           scheduled: scheduledAppointments,
+//           checkedIn: checkedInAppointments,
+//           completed: completedAppointments,
+//           cancelled: cancelledAppointments,
+//           noShow: noShowAppointments,
+//         },
+
+//         departmentVisitSummary,
+//         doctorWorkloadSummary,
+
+//         revenueBreakdown: {
+//           consultationRevenue: revenueBreakdown.consultationRevenue || 0,
+//           labRevenue: revenueBreakdown.labRevenue || 0,
+//           pharmacyRevenue: revenueBreakdown.pharmacyRevenue || 0,
+//           invoiceGrossTotal: revenueBreakdown.invoiceGrossTotal || 0,
+//           collectedRevenue: revenueBreakdown.collectedRevenue || 0,
+//         },
+//       },
+//     });
+//   } catch (error) {
+//     return res.status(500).json({
+//       success: false,
+//       message: error.message || "Failed to fetch dashboard analytics",
+//     });
+//   }
+// };
+
+
 const getHospitalDashboardData = async (req, res) => {
   try {
+    const allowedRoles = ["super_admin", "accountant"];
+
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Only super admins and accountants can access dashboard analytics",
+      });
+    }
+
     const { date } = req.query;
 
     const selectedDate = date ? new Date(date) : new Date();
@@ -930,6 +1352,7 @@ const getHospitalDashboardData = async (req, res) => {
         },
       ]),
 
+      // Department Visit Summary - Add null check for departmentRef
       AppointmentToken.aggregate([
         {
           $match: {
@@ -937,6 +1360,7 @@ const getHospitalDashboardData = async (req, res) => {
               $gte: startOfDay,
               $lte: endOfDay,
             },
+            departmentRef: { $ne: null },
           },
         },
         {
@@ -993,6 +1417,7 @@ const getHospitalDashboardData = async (req, res) => {
         },
       ]),
 
+      // Doctor Workload Summary - Add null check for doctor
       AppointmentToken.aggregate([
         {
           $match: {
@@ -1000,6 +1425,7 @@ const getHospitalDashboardData = async (req, res) => {
               $gte: startOfDay,
               $lte: endOfDay,
             },
+            doctor: { $ne: null },
           },
         },
         {
@@ -1148,6 +1574,7 @@ const getHospitalDashboardData = async (req, res) => {
     });
   }
 };
+
 
 module.exports = {
   getAllBillingPatients,

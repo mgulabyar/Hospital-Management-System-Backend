@@ -40,7 +40,7 @@ router.put(
 
 router.get(
   "/dashboard-analytics",
-  authorizeRoles("super_admin"),
+  authorizeRoles("super_admin", "accountant"),
   getHospitalDashboardData,
 );
 
