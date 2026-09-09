@@ -14,6 +14,7 @@ const departmentRoutes = require("./routes/departmentRoutes.js");
 const appointmentRoutes = require("./routes/appointmentRoutes.js");
 const auditLogRoutes = require("./routes/auditLogRoutes.js");
 const ipdRoutes = require("./routes/ipdRoutes.js");
+const reportRoutes = require("./routes/reportRoutes"); 
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use("/api/departments", departmentRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/ipd", ipdRoutes);
+app.use("/api/reports", reportRoutes);
 
 app.get("/", (req, res) => {
   res.send("Hospital Management System API is running...");
