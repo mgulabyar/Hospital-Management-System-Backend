@@ -14,14 +14,14 @@ const departmentRoutes = require("./routes/departmentRoutes.js");
 const appointmentRoutes = require("./routes/appointmentRoutes.js");
 const auditLogRoutes = require("./routes/auditLogRoutes.js");
 const ipdRoutes = require("./routes/ipdRoutes.js");
-const reportRoutes = require("./routes/reportRoutes"); 
+const reportRoutes = require("./routes/reportRoutes");
 
 dotenv.config();
 
 connectDB();
 
 const app = express();
-
+ 
 app.use(cors());
 app.use(express.json());
 
